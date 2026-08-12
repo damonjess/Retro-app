@@ -91,10 +91,27 @@ AmigaLaunchResult LaunchAmigaGame(const std::string& romPath) {
     }
 
     if (!isValidAmigaDiskImage(romPath)) {
-        return {false, 
-            "Amiga launch failed: invalid disk image format. Expected .adf, .hdf, or .dms file.\n"
-            "For Dune II, use the .adf (floppy) or .hdf (hard disk) version.",
-            "", ""};
+        std::string fileName = romPath.substr(romPath.rfind('/') + 1);
+        std::string lowerName = toLower(fileName);
+
+        std::string errorMsg = "Amiga launch failed: invalid disk image format. Expected .adf, .hdf, or .dms file.\n";
+
+        if (lowerName == "dune") {
+            errorMsg += "\n[DUNE II DETECTED]\n"
+                        "It looks like you are trying to launch a loose 'dune' file.\n"
+                        "Recommended: Use a proper .adf or .hdf image.\n"
+                        "Quick Fix: If dropped into the shell, type 'textprotect dune +e' then 'dune'.";
+        } else if (lowerName.find("dune") != std::string::npos &&
+                   (lowerName.find("disk 2") != std::string::npos || lowerName.find("disk 3") != std::string::npos ||
+                    lowerName.find("disk2") != std::string::npos || lowerName.find("disk3") != std::string::npos)) {
+            errorMsg += "\n[DUNE (1992) DETECTED]\n"
+                        "You are attempting to launch Disk 2 or 3.\n"
+                        "Please launch Disk 1 (e.g., 'Dune_Disk1.adf') to start the game.";
+        } else {
+            errorMsg += "For Dune II, use the .adf (floppy) or .hdf (hard disk) version.";
+        }
+
+        return {false, errorMsg, "", ""};
     }
 
     // Find a suitable Kickstart ROM

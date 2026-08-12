@@ -147,6 +147,18 @@ data class GameProfile(
             platform = "amiga",
         )
 
+        fun presetDune1992Amiga() = GameProfile(
+            gameId = "dune_1992_amiga",
+            title = "Dune (1992)",
+            os = "Amiga Kickstart 1.3",
+            cycles = 0,
+            frameCap = 50,
+            memMb = 1,
+            mixerRate = 44100,
+            machine = "amiga_a500",
+            platform = "amiga",
+        )
+
         fun presetDuneIIAmiga() = GameProfile(
             gameId = "dune_ii_amiga",
             title = "Dune II: The Battle for Arrakis",
@@ -234,6 +246,7 @@ object GameProfileStore {
             writeIfMissing(GameProfile.presetRedAlert95())
             writeIfMissing(GameProfile.presetDune2000Win98())
             writeIfMissing(GameProfile.presetAmigaA500())
+            writeIfMissing(GameProfile.presetDune1992Amiga())
             writeIfMissing(GameProfile.presetDuneIIAmiga())
             writeIfMissing(GameProfile.presetNintendoDsi())
             writeIfMissing(GameProfile.presetPs1())
@@ -258,6 +271,7 @@ object GameProfileStore {
     private fun gameIdForName(key: String): String = when {
         "red alert" in key || "command" in key || "c&c" in key -> "cnc_red_alert_win95"
         "dune 2000" in key -> "dune_2000_win98"
+        ("dune" in key && ("1992" in key || "adventure" in key || "disk 1" in key)) -> "dune_1992_amiga"
         "dune ii" in key || "dune 2" in key || key == "dune" -> "dune_ii_amiga"
         "amiga" in key || "a500" in key -> "amiga_a500_demo"
         "dsi" in key || "nintendo ds" in key -> "nintendo_dsi_demo"
@@ -267,6 +281,7 @@ object GameProfileStore {
 
     private fun presetForGameId(gameId: String): GameProfile = when (gameId) {
         "cnc_red_alert_win95" -> GameProfile.presetRedAlert95()
+        "dune_1992_amiga" -> GameProfile.presetDune1992Amiga()
         "dune_ii_amiga" -> GameProfile.presetDuneIIAmiga()
         "amiga_a500_demo" -> GameProfile.presetAmigaA500()
         "nintendo_dsi_demo" -> GameProfile.presetNintendoDsi()

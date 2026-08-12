@@ -143,12 +143,54 @@ Dune II: The Battle for Arrakis is a classic real-time strategy game for the Ami
    - Generate UAE configuration
    - Launch the game
 
+### Troubleshooting the AROS Shell
+
+If the game drops you into a raw AROS shell with an error like `dune: file is not executable`, you can use the following fixes:
+
+#### Quick fix (inside the AROS shell)
+At the `1>` prompt type:
+```bash
+textprotect dune +e
+dune
+```
+If you also want it readable/writable:
+```bash
+textprotect dune +e +r +w
+dune
+```
+You can check the bits with `textlist` or `textlist dune`. You should see something like `----rwed` once the executable bit is set.
+
+#### Better / permanent fixes
+- **Prefer a real disk image**: Dune II works most reliably from an `.adf` (floppy) or `.hdf` (hard disk) image, not as a loose file named `dune`. Put it here: `/sdcard/RetroRTS/Games/Amiga/dune_ii.adf`.
+- **Kickstart ROM**: Ensure Kickstart 1.3 is at `/sdcard/RetroRTS/system/amiga/kick13.rom`.
+- **Directory / hostfs mount**: After copying game files into the Amiga environment, you must always run `protect` on the main executable(s).
+
 ### Performance Tips
 
 - **Frame Rate**: Set to 50 Hz (PAL standard for Amiga)
 - **CPU**: Set to fastest (no cycle-exact emulation needed for Dune II)
 - **Memory**: 2 MB chip RAM is sufficient
 - **Audio**: 44.1 kHz stereo
+
+## Playing Dune (1992) on Amiga
+
+Dune (1992) by Cryo/Virgin is a 3-disk adventure game. It is distinct from Dune II.
+
+### Quick Checklist
+- **Kickstart ROM**: Place `kick13.rom` (Kickstart 1.3) in `/sdcard/RetroRTS/system/amiga/`.
+- **Game Files**: Rename your files to `Dune_Disk1.adf`, `Dune_Disk2.adf`, and `Dune_Disk3.adf` in `/sdcard/RetroRTS/Games/Amiga/`.
+- **Launch**: **Only** launch `Dune_Disk1.adf` from the RetroRTS library.
+
+### Important Note on Multi-Disk Games
+RetroRTS currently passes only one ADF path to the core and lacks a disk-swap UI. 
+- **Limitation**: When the game requests Disk 2 or 3, you will currently be unable to swap disks within the app.
+- **Expected Result**: Starting from Disk 1 with Kickstart 1.3 should show the Title Screen, not the AROS shell.
+
+### Troubleshooting
+If you land in the AROS shell:
+1. Ensure `kick13.rom` is present.
+2. Verify you launched Disk 1.
+3. If errors persist, type `dir` in the shell to see if the floppy is mounted.
 
 ## Technical Details
 

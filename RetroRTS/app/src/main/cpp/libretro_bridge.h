@@ -44,6 +44,7 @@ private:
     ANativeWindow* window_ = nullptr;
     std::atomic<bool> running_{false};
     std::atomic<uint16_t> padState_[2]{0, 0};
+    std::atomic<bool> keyState_[512]{false}; // RETROK_LAST is usually around 320
     std::recursive_mutex coreMutex_;
 
     std::string systemDir_;

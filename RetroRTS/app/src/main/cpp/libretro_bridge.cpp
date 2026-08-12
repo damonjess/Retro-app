@@ -89,12 +89,7 @@ int LibretroHost::loadCore(const std::string& corePath) {
 
 void LibretroHost::sendKeyString(const std::string& text) {
     std::lock_guard<std::recursive_mutex> lock(coreMutex_);
-    if (!keyboard_cb_) {
-        LOGE("sendKeyString: No keyboard callback registered by core!");
-        return;
-    }
-
-    LOGI("sendKeyString: Sending '%s'", text.c_str());
+    LOGI("sendKeyString: Sending '%s' (cb=%p)", text.c_str(), keyboard_cb_);
 
     for (char c : text) {
         unsigned keycode = RETROK_UNKNOWN;
@@ -149,16 +144,18 @@ void LibretroHost::runLoop() {
         {
             std::lock_guard<std::recursive_mutex> lock(coreMutex_);
 
-            // Process keyboard queue
-            if (keyboard_cb_) {
+            // Process keyboard queue: 1 event per frame to ensure "down" time
+            {
                 std::lock_guard<std::mutex> qlock(queueMutex_);
                 if (!keyEventQueue_.empty()) {
-                    // Process 2 events per frame (Down + Up for one char)
-                    for (int i = 0; i < 2 && !keyEventQueue_.empty(); ++i) {
-                        auto& ev = keyEventQueue_.front();
-                        keyboard_cb_(ev.down, ev.keycode, ev.character, 0);
-                        keyEventQueue_.erase(keyEventQueue_.begin());
+                    auto& ev = keyEventQueue_.front();
+                    if (ev.keycode < 512) {
+                        keyState_[ev.keycode].store(ev.down);
                     }
+                    if (keyboard_cb_) {
+                        keyboard_cb_(ev.down, ev.keycode, ev.character, 0);
+                    }
+                    keyEventQueue_.erase(keyEventQueue_.begin());
                 }
             }
 
@@ -347,8 +344,13 @@ void LibretroHost::inputPollCallback() {
 
 int16_t LibretroHost::inputStateCallback(unsigned port, unsigned device, unsigned index, unsigned id) {
     auto& host = getInstance();
-    if (port < 2 && device == RETRO_DEVICE_JOYPAD) {
-        return (host.padState_[port].load() & (1 << id)) ? 1 : 0;
+    if (port < 2) {
+        if (device == RETRO_DEVICE_JOYPAD) {
+            return (host.padState_[port].load() & (1 << id)) ? 1 : 0;
+        }
+        if (device == RETRO_DEVICE_KEYBOARD && id < 512) {
+            return host.keyState_[id].load() ? 1 : 0;
+        }
     }
     return 0;
 }

@@ -1165,6 +1165,10 @@ private fun DosboxPlayScreen(game: GameEntry, onExit: () -> Unit) {
     
     // Auto-detect high refresh rate
     LaunchedEffect(Unit) {
+        if (game.name.lowercase().contains("dune") && game.consoleType == ConsoleType.AMIGA) {
+            statusMsg = "Multi-disk game detected. Swap UI unavailable."
+        }
+        
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             val maxRefresh = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             context.display?.supportedModes?.maxByOrNull { it.refreshRate }?.refreshRate ?: 60f
@@ -1248,6 +1252,7 @@ private fun DosboxPlayScreen(game: GameEntry, onExit: () -> Unit) {
         Column(
             Modifier
                 .align(Alignment.TopStart)
+                .statusBarsPadding()
                 .padding(8.dp)
         ) {
             Text(
@@ -1267,6 +1272,7 @@ private fun DosboxPlayScreen(game: GameEntry, onExit: () -> Unit) {
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .background(Color(0xCC000000))
+                .navigationBarsPadding()
                 .padding(8.dp)
         ) {
             // Save/load slot row
@@ -1323,7 +1329,7 @@ private fun DosboxPlayScreen(game: GameEntry, onExit: () -> Unit) {
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                RtsOverlay(Modifier.weight(1f), onExit) {
+                RtsOverlay(Modifier.weight(1f), game.consoleType, onExit) {
                     showKeyboardDialog = true
                 }
             }
@@ -1334,7 +1340,12 @@ private fun DosboxPlayScreen(game: GameEntry, onExit: () -> Unit) {
 // Keep RtsOverlay as before but remove the outer Box that filled the whole
 // screen — it now lives inside the bottom toolbar row:
 @Composable
-private fun RtsOverlay(modifier: Modifier, onExit: () -> Unit, onKeyboard: () -> Unit) {
+private fun RtsOverlay(
+    modifier: Modifier,
+    consoleType: ConsoleType,
+    onExit: () -> Unit,
+    onKeyboard: () -> Unit
+) {
     Row(
         modifier = modifier.padding(4.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1355,6 +1366,22 @@ private fun RtsOverlay(modifier: Modifier, onExit: () -> Unit, onKeyboard: () ->
         ) {
             Icon(Icons.Filled.Keyboard, contentDescription = "Keyboard", tint = Color.White)
         }
+
+        if (consoleType == ConsoleType.AMIGA) {
+            Button(
+                onClick = {
+                    // Try multiple possible commands for different Amiga shell environments
+                    NativeEmulatorBridge.sendKeyString("protect dune +e\n")
+                    NativeEmulatorBridge.sendKeyString("textprotect dune +e\n")
+                    NativeEmulatorBridge.sendKeyString("dune\n")
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF5D4037)),
+                contentPadding = PaddingValues(horizontal = 8.dp)
+            ) {
+                Text("Fix Dune (1992)", style = MaterialTheme.typography.labelSmall)
+            }
+        }
+
         Spacer(Modifier.weight(1f))
         Button(
             onClick = onExit,
