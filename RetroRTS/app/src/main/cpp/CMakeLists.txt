@@ -8,16 +8,16 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(pcsx_rearmed_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/pcsx_rearmed)
 
 # Detect if PCSX-ReARMed source is present
-set(PCSX_CORE_PRESENT FALSE)
-if(EXISTS ${pcsx_rearmed_SOURCE_DIR}/libpcsxcore/psxbios.c)
-    set(PCSX_CORE_PRESENT TRUE)
-    message(STATUS "PCSX-ReARMed source found — building full PS1 core")
-else()
-    message(STATUS "PCSX-ReARMed source NOT found — building stubs only")
-endif()
+set(PCSX_CORE_PRESENT TRUE)
+message(STATUS "PCSX-ReARMed source forced — building full PS1 core")
 
 if(PCSX_CORE_PRESENT)
-    add_library(pcsx_core STATIC
+    # Enable ASM if building for ARM64
+    if(CMAKE_ANDROID_ARCH_ABI STREQUAL "arm64-v8a")
+        enable_language(ASM)
+    endif()
+
+    set(PCSX_SOURCES
         ${pcsx_rearmed_SOURCE_DIR}/libpcsxcore/psxbios.c
         ${pcsx_rearmed_SOURCE_DIR}/libpcsxcore/psxcounters.c
         ${pcsx_rearmed_SOURCE_DIR}/libpcsxcore/psxdma.c
@@ -39,10 +39,53 @@ if(PCSX_CORE_PRESENT)
         ${pcsx_rearmed_SOURCE_DIR}/libpcsxcore/database.c
         ${pcsx_rearmed_SOURCE_DIR}/libpcsxcore/gpu.c
         ${pcsx_rearmed_SOURCE_DIR}/libpcsxcore/gte.c
+        ${pcsx_rearmed_SOURCE_DIR}/libpcsxcore/gte_nf.c
         ${pcsx_rearmed_SOURCE_DIR}/libpcsxcore/spu.c
         ${pcsx_rearmed_SOURCE_DIR}/libpcsxcore/cdrom-async.c
         ${pcsx_rearmed_SOURCE_DIR}/libpcsxcore/gte_divider.c
+        ${pcsx_rearmed_SOURCE_DIR}/libpcsxcore/pad.c
+
+        # Frontend / Libretro
+        ${pcsx_rearmed_SOURCE_DIR}/frontend/main.c
+        ${pcsx_rearmed_SOURCE_DIR}/frontend/plugin.c
+        ${pcsx_rearmed_SOURCE_DIR}/frontend/cspace.c
+        ${pcsx_rearmed_SOURCE_DIR}/frontend/libretro.c
+
+        # SPU Plugin
+        ${pcsx_rearmed_SOURCE_DIR}/plugins/dfsound/dma.c
+        ${pcsx_rearmed_SOURCE_DIR}/plugins/dfsound/freeze.c
+        ${pcsx_rearmed_SOURCE_DIR}/plugins/dfsound/registers.c
+        ${pcsx_rearmed_SOURCE_DIR}/plugins/dfsound/spu.c
+        ${pcsx_rearmed_SOURCE_DIR}/plugins/dfsound/out.c
+        ${pcsx_rearmed_SOURCE_DIR}/plugins/dfsound/nullsnd.c
+
+        # GPU Plugin
+        ${pcsx_rearmed_SOURCE_DIR}/plugins/gpulib/gpu.c
+        ${pcsx_rearmed_SOURCE_DIR}/plugins/gpulib/prim.c
+        ${pcsx_rearmed_SOURCE_DIR}/plugins/gpulib/vout_pl.c
+
+        # Dynarec
+        ${pcsx_rearmed_SOURCE_DIR}/libpcsxcore/new_dynarec/new_dynarec.c
+        ${pcsx_rearmed_SOURCE_DIR}/libpcsxcore/new_dynarec/pcsxmem.c
+        ${pcsx_rearmed_SOURCE_DIR}/libpcsxcore/new_dynarec/emu_if.c
+
+        # Libretro Common Features
+        ${pcsx_rearmed_SOURCE_DIR}/deps/libretro-common/features/features_cpu.c
+        ${pcsx_rearmed_SOURCE_DIR}/deps/libretro-common/string/stdstring.c
+        ${pcsx_rearmed_SOURCE_DIR}/deps/libretro-common/compat/compat_strl.c
+        ${pcsx_rearmed_SOURCE_DIR}/deps/libretro-common/encodings/encoding_utf.c
+        ${pcsx_rearmed_SOURCE_DIR}/frontend/pcsxr-threads.c
     )
+
+    if(CMAKE_ANDROID_ARCH_ABI STREQUAL "arm64-v8a")
+        list(APPEND PCSX_SOURCES
+            ${pcsx_rearmed_SOURCE_DIR}/libpcsxcore/gte_arm64.S
+            ${pcsx_rearmed_SOURCE_DIR}/libpcsxcore/gte_nf_arm64.S
+            ${pcsx_rearmed_SOURCE_DIR}/libpcsxcore/new_dynarec/linkage_arm64.S
+        )
+    endif()
+
+    add_library(pcsx_core STATIC ${PCSX_SOURCES})
 else()
     add_library(pcsx_core STATIC pcsx_android_stubs.c)
 endif()
@@ -51,6 +94,10 @@ target_include_directories(pcsx_core PUBLIC
     ${pcsx_rearmed_SOURCE_DIR}
     ${pcsx_rearmed_SOURCE_DIR}/libpcsxcore
     ${pcsx_rearmed_SOURCE_DIR}/include
+    ${pcsx_rearmed_SOURCE_DIR}/frontend
+    ${pcsx_rearmed_SOURCE_DIR}/plugins/gpulib
+    ${pcsx_rearmed_SOURCE_DIR}/plugins/dfsound
+    ${pcsx_rearmed_SOURCE_DIR}/deps/libretro-common/include
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
@@ -58,9 +105,16 @@ target_compile_definitions(pcsx_core PRIVATE
     __ANDROID__=1
     NEON_BUILD=1
     HAVE_ZLIB=1
-    DRC_DISABLE=1
     BUILT_IN_GPU=1
+    HAVE_LIBRETRO=1
+    REARMED=1
+    NO_FRONTEND=1
+    NDRC_THREAD=1
 )
+
+if(NOT CMAKE_ANDROID_ARCH_ABI MATCHES "arm|aarch64")
+    target_compile_definitions(pcsx_core PRIVATE DRC_DISABLE=1)
+endif()
 
 find_package(ZLIB REQUIRED)
 target_link_libraries(pcsx_core PRIVATE ZLIB::ZLIB)
@@ -86,7 +140,7 @@ find_library(android-lib android)
 find_library(aaudio-lib aaudio)
 
 target_link_libraries(pcsx_rearmed
-    pcsx_core
+    -Wl,--whole-archive pcsx_core -Wl,--no-whole-archive
     ${log-lib}
     ${android-lib}
     ${aaudio-lib}

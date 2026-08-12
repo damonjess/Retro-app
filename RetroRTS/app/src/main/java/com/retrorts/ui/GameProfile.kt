@@ -14,6 +14,7 @@ data class GameProfile(
     val mixerRate: Int,
     val machine: String,
     val platform: String = "dosbox",
+    val skipKey: String = " "   // default: space
 ) {
     fun toJson(): String = JSONObject()
         .put("gameId", gameId)
@@ -25,6 +26,7 @@ data class GameProfile(
         .put("mixerRate", mixerRate)
         .put("machine", machine)
         .put("platform", platform)
+        .put("skipKey", skipKey)
         .toString(2)
 
     fun toDosboxConfig(gameDirectoryPath: String): String = """
@@ -110,6 +112,7 @@ data class GameProfile(
                 mixerRate = j.getInt("mixerRate"),
                 machine = j.getString("machine"),
                 platform = j.optString("platform", "dosbox"),
+                skipKey = j.optString("skipKey", " ")
             )
         }
 

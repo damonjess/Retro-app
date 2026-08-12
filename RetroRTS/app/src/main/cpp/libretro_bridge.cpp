@@ -7,12 +7,37 @@
 #include <algorithm>
 #include <cstdarg>
 #include <set>
+#include <cstdlib>
+#include <sys/mman.h>
+#include "pcsx_rearmed/frontend/plugin_lib.h"
 
 #define LOG_TAG "LibretroBridge"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 namespace retrorts {
+
+static void dummy_vblank(int, int) {}
+
+static void bridge_get_layer_pos(int *x, int *y, int *w, int *h) {}
+static int bridge_vout_open(void) { return 0; }
+static void bridge_vout_set_mode(int w, int h, int raw_w, int raw_h, int bpp) {}
+static void bridge_vout_flip(const void *vram, int vram_offset, int bgr24,
+    int x, int y, int w, int h, int dims_changed) {}
+static void bridge_vout_close(void) {}
+static void bridge_vout_set_raw_vram(void *vram) {}
+static void bridge_cspace_blit(void *dst, const void *src, int bytes) {}
+static void *bridge_mmap(unsigned int size) {
+    void *ptr = malloc(size);
+    if (!ptr) return MAP_FAILED;
+    // The core expects a pointer with some alignment; malloc gives 8‑byte aligned which is fine.
+    return ptr;
+}
+static void bridge_munmap(void *ptr, unsigned int size) {
+    free(ptr);
+}
+static void bridge_pl_set_gpu_caps(int caps) {}
+static void bridge_gpu_state_change(int what, int cycles) {}
 
 static void libretroLog(enum retro_log_level level, const char *fmt, ...) {
     va_list args;
@@ -97,6 +122,11 @@ int LibretroHost::loadCore(const std::string& corePath) {
     LOGI("Loading core: %s", corePath.c_str());
     coreLib_ = dlopen(corePath.c_str(), RTLD_NOW);
     if (!coreLib_) {
+        LOGI("Core %s not found by name, attempting self-load", corePath.c_str());
+        coreLib_ = dlopen(NULL, RTLD_NOW);
+    }
+
+    if (!coreLib_) {
         LOGE("Failed to load core %s: %s", corePath.c_str(), dlerror());
         return -1;
     }
@@ -113,6 +143,18 @@ int LibretroHost::loadCore(const std::string& corePath) {
     retro_set_audio_sample_batch_fn = (void (*)(retro_audio_sample_batch_t))dlsym(coreLib_, "retro_set_audio_sample_batch");
     retro_set_input_poll_fn = (void (*)(retro_input_poll_t))dlsym(coreLib_, "retro_set_input_poll");
     retro_set_input_state_fn = (void (*)(retro_input_state_t))dlsym(coreLib_, "retro_set_input_state");
+    retro_set_controller_port_device_fn = (void (*)(unsigned, unsigned))dlsym(coreLib_, "retro_set_controller_port_device");
+
+    if (!retro_init_fn) LOGE("Missing symbol: retro_init");
+    if (!retro_run_fn) LOGE("Missing symbol: retro_run");
+    if (!retro_load_game_fn) LOGE("Missing symbol: retro_load_game");
+    if (!retro_set_environment_fn) LOGE("Missing symbol: retro_set_environment");
+    if (!retro_get_system_av_info_fn) LOGE("Missing symbol: retro_get_system_av_info");
+    if (!retro_set_video_refresh_fn) LOGE("Missing symbol: retro_set_video_refresh");
+    if (!retro_set_audio_sample_fn) LOGE("Missing symbol: retro_set_audio_sample");
+    if (!retro_set_audio_sample_batch_fn) LOGE("Missing symbol: retro_set_audio_sample_batch");
+    if (!retro_set_input_poll_fn) LOGE("Missing symbol: retro_set_input_poll");
+    if (!retro_set_input_state_fn) LOGE("Missing symbol: retro_set_input_state");
 
     if (!retro_init_fn || !retro_run_fn || !retro_load_game_fn || !retro_set_environment_fn ||
         !retro_set_video_refresh_fn || !retro_set_audio_sample_fn || !retro_set_audio_sample_batch_fn ||
@@ -131,7 +173,44 @@ int LibretroHost::loadCore(const std::string& corePath) {
     retro_set_input_state_fn(inputStateCallback);
 
     retro_init_fn();
+
+    // --- FIX: Override GPU_vBlank ---
+    void (**gpu_vblank_func)(int, int) = (void (**)(int, int))dlsym(coreLib_, "GPU_vBlank");
+    if (gpu_vblank_func) {
+        *gpu_vblank_func = dummy_vblank;
+        LOGI("GPU_vBlank overridden to dummy");
+    }
+
+    // --- Provide real rearmed_cbs ---
+    void (*gpu_rearmed_callbacks_fn)(const struct rearmed_cbs *) =
+        (void (*)(const struct rearmed_cbs *))dlsym(coreLib_, "GPUrearmedCallbacks");
+    if (gpu_rearmed_callbacks_fn) {
+        static struct rearmed_cbs bridge_cbs = {};
+        bridge_cbs.pl_get_layer_pos = bridge_get_layer_pos;
+        bridge_cbs.pl_vout_open = bridge_vout_open;
+        bridge_cbs.pl_vout_set_mode = bridge_vout_set_mode;
+        bridge_cbs.pl_vout_flip = bridge_vout_flip;
+        bridge_cbs.pl_vout_close = bridge_vout_close;
+        bridge_cbs.pl_vout_set_raw_vram = bridge_vout_set_raw_vram;
+        bridge_cbs.cspace_blit = bridge_cspace_blit;
+        bridge_cbs.mmap = bridge_mmap;
+        bridge_cbs.munmap = bridge_munmap;
+        bridge_cbs.pl_set_gpu_caps = bridge_pl_set_gpu_caps;
+        bridge_cbs.gpu_state_change = bridge_gpu_state_change;
+
+        gpu_rearmed_callbacks_fn(&bridge_cbs);
+        LOGI("GPUrearmedCallbacks called with valid cbs");
+    }
+    // ---------------------------------
+
     LOGI("Core initialized");
+
+    if (retro_set_controller_port_device_fn) {
+        LOGI("Setting controller port devices to RETRO_DEVICE_JOYPAD");
+        retro_set_controller_port_device_fn(0, RETRO_DEVICE_JOYPAD);
+        retro_set_controller_port_device_fn(1, RETRO_DEVICE_JOYPAD);
+    }
+
     keyboard_cb_ = nullptr;
     return 0;
 }
@@ -308,7 +387,8 @@ bool LibretroHost::envCallback(unsigned cmd, void* data) {
                     }
                 }
             }
-            return true;
+            // For other variables, return false so the core uses defaults
+            return false;
         }
         default:
             static std::set<unsigned> logged_cmds;
@@ -426,10 +506,19 @@ int16_t LibretroHost::inputStateCallback(unsigned port, unsigned device, unsigne
     auto& host = getInstance();
     if (port < 2) {
         if (device == RETRO_DEVICE_JOYPAD) {
-            return (host.padState_[port].load() & (1 << id)) ? 1 : 0;
+            int16_t state = (host.padState_[port].load() & (1 << id)) ? 1 : 0;
+            return state;
         }
-        if (device == RETRO_DEVICE_KEYBOARD && id < 512) {
-            return host.keyState_[id].load() ? 1 : 0;
+        if (device == RETRO_DEVICE_KEYBOARD) {
+            // Amiga Fix: Map Gamepad START to Space bar to allow skipping intros
+            if (host.coreType_ == CoreType::AMIGA && id == RETROK_SPACE) {
+                if (host.padState_[port].load() & (1 << RETRO_DEVICE_ID_JOYPAD_START)) {
+                    return 1;
+                }
+            }
+            if (id < 512) {
+                return host.keyState_[id].load() ? 1 : 0;
+            }
         }
     }
     return 0;

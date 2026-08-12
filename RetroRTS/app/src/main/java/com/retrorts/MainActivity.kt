@@ -28,6 +28,7 @@ import androidx.activity.result.contract.ActivityResultContracts.StartActivityFo
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -47,6 +48,8 @@ import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Keyboard
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -101,8 +104,8 @@ const val RETRO_DEVICE_ID_JOYPAD_R = 11
 data class GameEntry(
     val name: String,
     val filePath: String,
-    val gameId: String = name.lowercase().replace(" ", "_"),
-    val consoleType: ConsoleType = ConsoleType.detect(filePath)
+    val gameId: String = "",
+    val consoleType: ConsoleType = ConsoleType.UNKNOWN
 )
 data class SettingsState(var displayScale: Float = 1f, var sensitivity: Float = 1f, var volume: Float = 0.8f)
 
@@ -618,7 +621,7 @@ private fun LauncherScreen(
                 if (realPath != null && GamePathValidator.isValid(realPath)) {
                     val name = realPath.substringAfterLast('/')
                     withContext(Dispatchers.Main) {
-                        games.add(GameEntry(name, realPath))
+                        games.add(GameEntry(name, realPath, consoleType = ConsoleType.detect(realPath)))
                         GameLibrary.save(context, games)
                     }
                 }
@@ -635,7 +638,7 @@ private fun LauncherScreen(
             if (realPath != null && GamePathValidator.isValid(realPath)) {
                 val name = realPath.substringAfterLast('/')
                 withContext(Dispatchers.Main) {
-                    games.add(GameEntry(name, realPath))
+                    games.add(GameEntry(name, realPath, consoleType = ConsoleType.detect(realPath)))
                     GameLibrary.save(context, games)
                 }
             }
@@ -684,6 +687,7 @@ private fun LauncherScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun LibraryTab(
     games: MutableList<GameEntry>,
@@ -785,37 +789,68 @@ private fun LibraryTab(
             return
         }
 
-        // ── Game list ─────────────────────────────────────────────────
+        // ── Grouped Game list ─────────────────────────────────────────
+        val grouped = games.groupBy { it.consoleType }
+        val consoleOrder = listOf(
+            ConsoleType.PS1,
+            ConsoleType.AMIGA,
+            ConsoleType.DOSBOX,
+            ConsoleType.NINTENDO_DSI,
+            ConsoleType.UNKNOWN
+        )
+
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            contentPadding = PaddingValues(12.dp)
         ) {
-            items(games) { game ->
-                GameCard(game, onLaunch = { onLaunch(game) }, onRemove = { games.remove(game) })
-            }
+            grouped.toList()
+                .sortedBy { (type, _) ->
+                    val idx = consoleOrder.indexOf(type)
+                    if (idx == -1) consoleOrder.size else idx
+                }
+                .forEach { (console, consoleGames) ->
+                    stickyHeader {
+                        ConsoleHeader(console)
+                    }
+                    items(consoleGames, key = { it.gameId.ifBlank { it.filePath } }) { game ->
+                        ModernGameCard(
+                            game = game,
+                            onLaunch = { onLaunch(game) },
+                            onRemove = { games.remove(game) }
+                        )
+                    }
+                    item { Spacer(Modifier.height(8.dp)) }
+                }
         }
     }
 }
 
 @Composable
-private fun GameCard(game: GameEntry, onLaunch: () -> Unit, onRemove: () -> Unit) {
-    val consoleIcon = when (game.consoleType) {
-        ConsoleType.PS1          -> "🎮"
-        ConsoleType.NINTENDO_DSI -> "🎮"
-        ConsoleType.AMIGA        -> "💾"
-        ConsoleType.DOSBOX       -> "🖥️"
-        else                     -> "🕹️"
+private fun ConsoleHeader(console: ConsoleType) {
+    val (icon, color) = when (console) {
+        ConsoleType.PS1 -> "🎮" to Color(0xFFD8C77A) // Matching theme gold
+        ConsoleType.AMIGA -> "💾" to Color(0xFF93A17B) // Matching theme green
+        ConsoleType.DOSBOX -> "🖥️" to Color(0xFF6A6455) // Matching theme brown
+        ConsoleType.NINTENDO_DSI -> "🎴" to Color(0xFFD8C77A)
+        else -> "🕹️" to Color(0xFF93A17B)
     }
-    val consoleName = when (game.consoleType) {
-        ConsoleType.PS1          -> "PlayStation 1"
-        ConsoleType.NINTENDO_DSI -> "Nintendo DSi"
-        ConsoleType.AMIGA        -> "Amiga"
-        ConsoleType.DOSBOX       -> "DOS"
-        else                     -> "Unknown"
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = color.copy(alpha = 0.15f),
+        shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
+    ) {
+        Text(
+            text = "$icon  ${console.name.replace("_", " ").lowercase().replaceFirstChar { it.uppercase() }}",
+            modifier = Modifier.padding(12.dp),
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            color = color
+        )
     }
+}
 
-    // Just the filename, not the full path
+@Composable
+private fun ModernGameCard(game: GameEntry, onLaunch: () -> Unit, onRemove: () -> Unit) {
     val displayPath = game.filePath
         .substringAfterLast('/')
         .substringAfterLast('%')
@@ -827,13 +862,14 @@ private fun GameCard(game: GameEntry, onLaunch: () -> Unit, onRemove: () -> Unit
     if (showDelete) {
         AlertDialog(
             onDismissRequest = { showDelete = false },
-            confirmButton = { Button(onClick = {
-                onRemove()
-                showDelete = false
-                // save is handled by LaunchedEffect(games.size) above
+            confirmButton = {
+                Button(onClick = {
+                    onRemove()
+                    showDelete = false
+                },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B2020))
+                ) { Text("Remove") }
             },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B2020))
-            ) { Text("Remove") } },
             dismissButton = { Button(onClick = { showDelete = false }) { Text("Cancel") } },
             title = { Text("Remove ${game.name}?") },
             text  = { Text("This only removes it from the list. Your file is not deleted.") }
@@ -841,47 +877,64 @@ private fun GameCard(game: GameEntry, onLaunch: () -> Unit, onRemove: () -> Unit
     }
 
     Card(
-        colors  = CardDefaults.cardColors(containerColor = Color(0xFF2B2920)),
-        shape   = RoundedCornerShape(10.dp),
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        shape = RoundedCornerShape(12.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = Color(0xFF2B2920)
+        )
     ) {
         Row(
-            Modifier.padding(12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Icon
-            Text(consoleIcon, style = MaterialTheme.typography.headlineMedium,
-                modifier = Modifier.padding(end = 12.dp))
+            // Platform icon
+            val icon = when (game.consoleType) {
+                ConsoleType.PS1 -> "🎮"
+                ConsoleType.AMIGA -> "💾"
+                ConsoleType.DOSBOX -> "🖥️"
+                ConsoleType.NINTENDO_DSI -> "🎴"
+                else -> "🕹️"
+            }
+            Text(
+                text = icon,
+                style = MaterialTheme.typography.headlineSmall,
+                modifier = Modifier.padding(end = 12.dp)
+            )
 
-            // Name + path
-            Column(Modifier.weight(1f)) {
-                Text(game.name, color = Color(0xFFE6DCA3),
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.SemiBold)
-                Text(consoleName, color = Color(0xFF93A17B),
-                    style = MaterialTheme.typography.labelSmall)
-                Text(displayPath, color = Color(0xFF6A6455),
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = game.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color(0xFFE6DCA3),
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = displayPath,
                     style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFF93A17B),
                     maxLines = 1,
-                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
             }
 
-            // Buttons
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Button(
-                    onClick = onLaunch,
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A6A2A)),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                ) { Text("▶  Play") }
-                TextButton(
-                    onClick = { showDelete = true },
-                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
-                ) { Text("✕ Remove", color = Color(0xFF8B5050),
-                    style = MaterialTheme.typography.labelSmall) }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onLaunch) {
+                    Icon(Icons.Filled.SportsEsports, contentDescription = "Play", tint = Color(0xFFD8C77A))
+                }
+                IconButton(onClick = { showDelete = true }) {
+                    Icon(Icons.Filled.Delete, contentDescription = "Remove", tint = Color(0xFF8B5050))
+                }
             }
         }
     }
 }
+
+
 
 data class BiosEntry(
     val console: String,
@@ -1208,6 +1261,9 @@ private fun DosboxPlayScreen(game: GameEntry, onExit: () -> Unit) {
     var statusMsg by remember { mutableStateOf("") }
     var currentMask by remember { mutableStateOf(0) }
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    
+    val profile = remember(game.name) { GameProfileStore.loadByGameName(game.name) }
 
     // Live perf stats — poll every second
     var fps by remember { mutableStateOf(0f) }
@@ -1331,6 +1387,24 @@ private fun DosboxPlayScreen(game: GameEntry, onExit: () -> Unit) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 // Utility buttons moved to top to clear the bottom for controls
                 IconButton(
+                    onClick = {
+                        // Send keyboard skip key
+                        NativeEmulatorBridge.sendKeyString(profile.skipKey)
+                        // Also pulse joystick fire for compatibility
+                        scope.launch {
+                            NativeEmulatorBridge.updateInput(0, currentMask or (1 shl RETRO_DEVICE_ID_JOYPAD_B))
+                            NativeEmulatorBridge.updateInput(1, currentMask or (1 shl RETRO_DEVICE_ID_JOYPAD_B))
+                            delay(100)
+                            NativeEmulatorBridge.updateInput(0, currentMask)
+                            NativeEmulatorBridge.updateInput(1, currentMask)
+                        }
+                    },
+                    modifier = Modifier.background(Color(0x44D8C77A), CircleShape).size(40.dp)
+                ) {
+                    Icon(Icons.Filled.SkipNext, contentDescription = "Skip", tint = Color.Black)
+                }
+
+                IconButton(
                     onClick = { NativeEmulatorBridge.updateInput(0, 1 shl 10) }, // L
                     modifier = Modifier.background(Color(0x44FFFFFF), CircleShape).size(40.dp)
                 ) {
@@ -1415,6 +1489,8 @@ private fun VirtualGamepad(
             // Amiga Fire 1 is usually B or A in Libretro. We map to both for compatibility.
             GamepadButton(Modifier.size(80.dp), "FIRE", Color(0xFF8B2020)) { updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_B, RETRO_DEVICE_ID_JOYPAD_A), it) }
             GamepadButton(Modifier.size(80.dp), "2", Color(0xFF3A3A6A)) { updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_Y, RETRO_DEVICE_ID_JOYPAD_X), it) }
+            // Added START button for skipping intros (mapped to Space in Amiga core)
+            GamepadButton(Modifier.size(60.dp), "START", Color(0xFF444444)) { updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_START), it) }
         }
     }
 }

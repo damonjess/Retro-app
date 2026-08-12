@@ -1,6 +1,7 @@
 package com.retrorts
 
 import android.content.Context
+import com.retrorts.ui.ConsoleType
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -18,9 +19,10 @@ object GameLibrary {
             val arr = JSONArray()
             games.forEach { g ->
                 arr.put(JSONObject().apply {
-                    put("name",     g.name)
-                    put("filePath", g.filePath)
-                    put("gameId",   g.gameId)
+                    put("name",        g.name)
+                    put("filePath",    g.filePath)
+                    put("gameId",      g.gameId)
+                    put("consoleType", g.consoleType.name)
                 })
             }
             libraryFile(context).writeText(arr.toString())
@@ -33,10 +35,19 @@ object GameLibrary {
             val arr  = JSONArray(text)
             (0 until arr.length()).map { i ->
                 val o = arr.getJSONObject(i)
+                val filePath = o.getString("filePath")
+                val consoleName = o.optString("consoleType", "")
+                val console = if (consoleName.isNotEmpty()) {
+                    runCatching { ConsoleType.valueOf(consoleName) }.getOrDefault(ConsoleType.detect(filePath))
+                } else {
+                    ConsoleType.detect(filePath)
+                }
+                
                 GameEntry(
-                    name     = o.getString("name"),
-                    filePath = o.getString("filePath"),
-                    gameId   = o.optString("gameId", o.getString("name")
+                    name        = o.getString("name"),
+                    filePath    = filePath,
+                    consoleType = console,
+                    gameId      = o.optString("gameId", o.getString("name")
                         .lowercase().replace(" ", "_"))
                 )
             }
@@ -48,7 +59,12 @@ object GameLibrary {
                      val list = JSONArray(legacy.readText()).let { a ->
                          (0 until a.length()).map { i ->
                              val o = a.getJSONObject(i)
-                             GameEntry(o.getString("name"), o.getString("filePath"))
+                             val path = o.getString("filePath")
+                             GameEntry(
+                                 name = o.getString("name"),
+                                 filePath = path,
+                                 consoleType = ConsoleType.detect(path)
+                             )
                          }
                      }
                      save(context, list)
@@ -84,8 +100,9 @@ object GameLibrary {
                     if (file.length() < 1024 && ext !in setOf("bat", "com", "cue") && !isExtensionless) return@forEach
 
                     found.add(GameEntry(
-                        name     = file.nameWithoutExtension,
-                        filePath = file.absolutePath
+                        name        = file.nameWithoutExtension,
+                        filePath    = file.absolutePath,
+                        consoleType = ConsoleType.detect(file.absolutePath)
                     ))
                 } else if (file.isDirectory && file != root) {
                     val hasGame = file.listFiles()?.any {
@@ -93,8 +110,9 @@ object GameLibrary {
                     } == true
                     if (hasGame) {
                         found.add(GameEntry(
-                            name     = file.name,
-                            filePath = file.absolutePath
+                            name        = file.name,
+                            filePath    = file.absolutePath,
+                            consoleType = ConsoleType.detect(file.absolutePath)
                         ))
                     }
                 }

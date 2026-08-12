@@ -23,6 +23,7 @@ public:
 
     void sendKeyString(const std::string& text);
     void updateJoypad(int port, uint16_t state);
+    void updateMouse(int buttonMask, int16_t dx, int16_t dy);
 
     void setWindow(ANativeWindow* window);
 
@@ -53,6 +54,9 @@ private:
     std::string saveDir_;
     std::string amigaKickstart_;
     double lastSampleRate_ = 44100.0;
+    std::atomic<uint16_t> mouseButtons_{0};
+    std::atomic<int16_t> mouseX_{0};
+    std::atomic<int16_t> mouseY_{0};
     CoreType coreType_ = CoreType::NONE;
     retro_keyboard_event_t keyboard_cb_ = nullptr;
 
@@ -80,6 +84,7 @@ private:
     void (*retro_set_audio_sample_batch_fn)(retro_audio_sample_batch_t) = nullptr;
     void (*retro_set_input_poll_fn)(retro_input_poll_t) = nullptr;
     void (*retro_set_input_state_fn)(retro_input_state_t) = nullptr;
+    void (*retro_set_controller_port_device_fn)(unsigned port, unsigned device) = nullptr;
 };
 
 extern "C" {

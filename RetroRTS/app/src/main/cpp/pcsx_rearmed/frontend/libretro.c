@@ -1060,7 +1060,7 @@ static bool update_option_visibility(void)
    return updated;
 }
 
-void retro_set_environment(retro_environment_t cb)
+RETRO_API void retro_set_environment(retro_environment_t cb)
 {
    bool option_categories = false;
 #ifdef USE_LIBRETRO_VFS
@@ -1134,13 +1134,13 @@ void retro_set_environment(retro_environment_t cb)
 #endif
 }
 
-void retro_set_video_refresh(retro_video_refresh_t cb) { video_cb = cb; }
-void retro_set_audio_sample(retro_audio_sample_t cb) { (void)cb; }
-void retro_set_audio_sample_batch(retro_audio_sample_batch_t cb) { audio_batch_cb = cb; }
-void retro_set_input_poll(retro_input_poll_t cb) { input_poll_cb = cb; }
-void retro_set_input_state(retro_input_state_t cb) { input_state_cb = cb; }
+RETRO_API void retro_set_video_refresh(retro_video_refresh_t cb) { video_cb = cb; }
+RETRO_API void retro_set_audio_sample(retro_audio_sample_t cb) { (void)cb; }
+RETRO_API void retro_set_audio_sample_batch(retro_audio_sample_batch_t cb) { audio_batch_cb = cb; }
+RETRO_API void retro_set_input_poll(retro_input_poll_t cb) { input_poll_cb = cb; }
+RETRO_API void retro_set_input_state(retro_input_state_t cb) { input_state_cb = cb; }
 
-unsigned retro_api_version(void)
+RETRO_API unsigned retro_api_version(void)
 {
    return RETRO_API_VERSION;
 }
@@ -1217,7 +1217,7 @@ void retro_set_controller_port_device(unsigned port, unsigned device)
    }
 }
 
-void retro_get_system_info(struct retro_system_info *info)
+RETRO_API void retro_get_system_info(struct retro_system_info *info)
 {
 #ifndef GIT_VERSION
 #define GIT_VERSION ""
@@ -1229,7 +1229,7 @@ void retro_get_system_info(struct retro_system_info *info)
    info->need_fullpath    = true;
 }
 
-void retro_get_system_av_info(struct retro_system_av_info *info)
+RETRO_API void retro_get_system_av_info(struct retro_system_av_info *info)
 {
    unsigned geom_height          = vout_height;
    unsigned geom_width           = vout_width;
@@ -1945,7 +1945,7 @@ static void show_enabled_hacks(void)
    }
 }
 
-bool retro_load_game(const struct retro_game_info *info)
+RETRO_API bool retro_load_game(const struct retro_game_info *info)
 {
    size_t i;
    unsigned int cd_index = 0;
@@ -3485,7 +3485,7 @@ static void print_internal_fps(void)
 static bool get_bios_config_hle(void);
 static void prepare_bios(bool use_hle);
 
-void retro_run(void)
+RETRO_API RETRO_API void retro_run(void)
 {
    //SysReset must be run while core is running,Not in menu (Locks up Retroarch)
    if (rebootemu != 0)
@@ -3889,7 +3889,7 @@ static void loadPSXBios(void)
       show_notification(msg_str, duration, 2, level);
 }
 
-void retro_init(void)
+RETRO_API void retro_init(void)
 {
    unsigned dci_version = 0;
    struct retro_rumble_interface rumble;
@@ -3986,7 +3986,7 @@ void retro_init(void)
    check_system_specs();
 }
 
-void retro_deinit(void)
+RETRO_API void retro_deinit(void)
 {
    size_t i;
 

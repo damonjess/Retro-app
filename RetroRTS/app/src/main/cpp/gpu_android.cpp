@@ -108,3 +108,14 @@ extern "C" void GPU_vBlank_android(int val, int start) {
 extern "C" void GPU_updateLace(void) {
     GPU_vBlank_android(1, 0);
 }
+
+// Satisfy PCSX-ReARMed gpulib renderer expectations
+extern "C" int renderer_init(void) { return 0; }
+extern "C" void renderer_finish(void) {}
+extern "C" void renderer_sync_ecmds(uint32_t* ecmds, int count) {}
+extern "C" void renderer_notify_screen_change(int x, int y) {}
+extern "C" void renderer_do_cmd_list(uint32_t* list, int count) {}
+extern "C" void renderer_flush_queues(void) {}
+extern "C" void renderer_update_caches(int x, int y, int w, int h) {}
+extern "C" void renderer_set_interlace(int enable, int is_odd) {}
+extern "C" void renderer_set_config(const void* config) {}
