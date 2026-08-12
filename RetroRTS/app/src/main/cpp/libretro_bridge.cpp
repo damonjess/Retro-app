@@ -174,35 +174,6 @@ int LibretroHost::loadCore(const std::string& corePath) {
 
     retro_init_fn();
 
-    // --- FIX: Override GPU_vBlank ---
-    void (**gpu_vblank_func)(int, int) = (void (**)(int, int))dlsym(coreLib_, "GPU_vBlank");
-    if (gpu_vblank_func) {
-        *gpu_vblank_func = dummy_vblank;
-        LOGI("GPU_vBlank overridden to dummy");
-    }
-
-    // --- Provide real rearmed_cbs ---
-    void (*gpu_rearmed_callbacks_fn)(const struct rearmed_cbs *) =
-        (void (*)(const struct rearmed_cbs *))dlsym(coreLib_, "GPUrearmedCallbacks");
-    if (gpu_rearmed_callbacks_fn) {
-        static struct rearmed_cbs bridge_cbs = {};
-        bridge_cbs.pl_get_layer_pos = bridge_get_layer_pos;
-        bridge_cbs.pl_vout_open = bridge_vout_open;
-        bridge_cbs.pl_vout_set_mode = bridge_vout_set_mode;
-        bridge_cbs.pl_vout_flip = bridge_vout_flip;
-        bridge_cbs.pl_vout_close = bridge_vout_close;
-        bridge_cbs.pl_vout_set_raw_vram = bridge_vout_set_raw_vram;
-        bridge_cbs.cspace_blit = bridge_cspace_blit;
-        bridge_cbs.mmap = bridge_mmap;
-        bridge_cbs.munmap = bridge_munmap;
-        bridge_cbs.pl_set_gpu_caps = bridge_pl_set_gpu_caps;
-        bridge_cbs.gpu_state_change = bridge_gpu_state_change;
-
-        gpu_rearmed_callbacks_fn(&bridge_cbs);
-        LOGI("GPUrearmedCallbacks called with valid cbs");
-    }
-    // ---------------------------------
-
     LOGI("Core initialized");
 
     if (retro_set_controller_port_device_fn) {
@@ -532,9 +503,8 @@ extern "C" int PCSX_Run(const char* bios, const char* disc, const char* saveDir)
     host.setSystemDir("/storage/emulated/0/RetroRTS/system/ps1");
     if (saveDir) host.setSaveDir(saveDir);
 
-    if (host.loadCore("libpcsx_rearmed_libretro.so") != 0) {
-        if (host.loadCore("libpcsx_rearmed.so") != 0) return -10;
-    }
+    if (host.loadCore("libpcsx_rearmed.so") != 0) return -10;
+
     if (host.loadGame(disc) != 0) return -2;
 
     std::thread([&host]() { host.runLoop(); }).detach();

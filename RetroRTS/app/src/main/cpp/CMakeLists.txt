@@ -46,7 +46,6 @@ if(PCSX_CORE_PRESENT)
         ${pcsx_rearmed_SOURCE_DIR}/libpcsxcore/pad.c
 
         # Frontend / Libretro
-        ${pcsx_rearmed_SOURCE_DIR}/frontend/main.c
         ${pcsx_rearmed_SOURCE_DIR}/frontend/plugin.c
         ${pcsx_rearmed_SOURCE_DIR}/frontend/cspace.c
         ${pcsx_rearmed_SOURCE_DIR}/frontend/libretro.c
@@ -75,6 +74,8 @@ if(PCSX_CORE_PRESENT)
         ${pcsx_rearmed_SOURCE_DIR}/deps/libretro-common/compat/compat_strl.c
         ${pcsx_rearmed_SOURCE_DIR}/deps/libretro-common/encodings/encoding_utf.c
         ${pcsx_rearmed_SOURCE_DIR}/frontend/pcsxr-threads.c
+        ${pcsx_rearmed_SOURCE_DIR}/frontend/main.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/pcsx_android_stubs.c
     )
 
     if(CMAKE_ANDROID_ARCH_ABI STREQUAL "arm64-v8a")
@@ -110,6 +111,7 @@ target_compile_definitions(pcsx_core PRIVATE
     REARMED=1
     NO_FRONTEND=1
     NDRC_THREAD=1
+    PLATFORM=libretro
 )
 
 if(NOT CMAKE_ANDROID_ARCH_ABI MATCHES "arm|aarch64")
@@ -145,6 +147,9 @@ target_link_libraries(pcsx_rearmed
     ${android-lib}
     ${aaudio-lib}
 )
+
+# Enforce 16 KB page alignment for Android 15+ compatibility
+target_link_options(pcsx_rearmed PRIVATE "-Wl,-z,max-page-size=16384")
 
 if(NOT PCSX_CORE_PRESENT)
     set_target_properties(pcsx_rearmed PROPERTIES LINK_FLAGS "-Wl,--allow-shlib-undefined")
