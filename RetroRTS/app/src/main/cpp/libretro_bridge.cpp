@@ -575,4 +575,24 @@ extern "C" int dsi_init(const char* rom_path) {
     return 0;
 }
 
+extern "C" int xbox_init(const char* rom_path, const char* bios_path) {
+    LOGI("Bridge: xbox_init called for %s (bios=%s)", rom_path, bios_path ? bios_path : "none");
+    auto& host = LibretroHost::getInstance();
+    host.stop();
+    host.setCoreType(CoreType::XBOX);
+    host.setSystemDir("/storage/emulated/0/RetroRTS/system/xbox");
+    host.setSaveDir("/storage/emulated/0/RetroRTS/Saves/Xbox");
+
+    // Attempt to load xemu or similar if a libretro port exists.
+    // Note: A standard Xbox libretro core is currently highly experimental.
+    if (host.loadCore("libxemu_libretro.so") != 0) {
+        return -10; // Core not found
+    }
+
+    if (host.loadGame(rom_path) != 0) return -2;
+
+    std::thread([&host]() { host.runLoop(); }).detach();
+    return 0;
+}
+
 } // namespace retrorts

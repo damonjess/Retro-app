@@ -81,7 +81,7 @@ object GameLibrary {
             File(android.os.Environment.getExternalStorageDirectory(), "RetroRTS/Games")
         )
         
-        val validExts = setOf("bin","cue","img","iso","exe","com","bat","adf","hdf","nds","dsi")
+        val validExts = setOf("bin","cue","img","iso","exe","com","bat","adf","hdf","nds","dsi","xbe")
         val found = mutableListOf<GameEntry>()
 
         roots.forEach { root ->

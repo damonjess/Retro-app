@@ -251,6 +251,22 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+
+            // Create Xbox system directory and extract BIOS
+            val xboxRoot = File(Environment.getExternalStorageDirectory(), "RetroRTS/system/xbox")
+            if (!xboxRoot.exists()) xboxRoot.mkdirs()
+
+            val xboxFiles = listOf("mcpx_1.0.bin", "bios.bin", "xbox_hdd.qcow2")
+            xboxFiles.forEach { fileName ->
+                val dest = File(xboxRoot, fileName)
+                if (!dest.exists()) {
+                    runCatching {
+                        assets.open("system/xbox/$fileName").use { input ->
+                            dest.outputStream().use { output -> input.copyTo(output) }
+                        }
+                    }
+                }
+            }
         }
     }
     private fun requestAudioFocus() { val am=getSystemService(AUDIO_SERVICE) as AudioManager; val req=AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN).setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_GAME).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build()).setOnAudioFocusChangeListener { if (it<=0) DosboxBridge.stopDosbox() }.build(); audioFocusRequest=req; am.requestAudioFocus(req)}
@@ -330,6 +346,22 @@ private suspend fun launchGameWithNativeBackend(
             return@withContext LaunchResult(false, 
                 "Warning: You are launching Disk 2 or 3.\n\n" +
                 "Dune must be started from Disk 1. Please launch 'Dune_Disk1.adf' instead.")
+        }
+    }
+
+    if (game.consoleType == ConsoleType.XBOX) {
+        val xboxRoot = File(Environment.getExternalStorageDirectory(), "RetroRTS/system/xbox")
+        val mcpx = File(xboxRoot, "mcpx_1.0.bin")
+        val bios = File(xboxRoot, "bios.bin")
+        
+        if (!mcpx.exists() || !bios.exists()) {
+            return@withContext LaunchResult(false, 
+                "Xbox BIOS files not found!\n\n" +
+                "Please copy these files from your desktop BIOS folder to:\n" +
+                "/sdcard/RetroRTS/system/xbox/\n\n" +
+                "Required files:\n" +
+                "1. mcpx_1.0.bin (MCPX Boot ROM)\n" +
+                "2. bios.bin (Flash ROM / Complex 4627)")
         }
     }
 
@@ -626,6 +658,10 @@ private fun LauncherScreen(
                     }
                 }
             }
+
+            // Create Xbox system directory
+            val xboxRoot = File(Environment.getExternalStorageDirectory(), "RetroRTS/system/xbox")
+            if (!xboxRoot.exists()) xboxRoot.mkdirs()
         }
     }
 
@@ -1139,6 +1175,10 @@ private fun BiosTab() {
                     }
                 }
             }
+
+            // Create Xbox system directory
+            val xboxRoot = File(Environment.getExternalStorageDirectory(), "RetroRTS/system/xbox")
+            if (!xboxRoot.exists()) xboxRoot.mkdirs()
         }
     }
 }

@@ -2,6 +2,7 @@
 #include "dsi_core.h"
 #include "ps1_core.h"
 #include "amiga_core.h"
+#include "xbox_core.h"
 #include "libretro_bridge.h"
 #include <dlfcn.h>
 #include <android/log.h>
@@ -151,6 +152,21 @@ if exist dune.bat dune.bat
         return "OK: " + result.message;
     }
 
+    // ── XBOX ─────────────────────────────────────────────────────────────
+    else if (c == "XBOX") {
+        auto result = retrorts::xbox::LaunchXboxGame(romPath);
+        if (!result.ok) return "ERROR: " + result.message;
+
+        int r = retrorts::xbox_init(result.resolvedRomPath.c_str(), result.resolvedBiosPath.c_str());
+        if (r == -10) {
+            return "ERROR: Xbox libretro core (xemu) is not bundled or failed to load. "
+                   "Xbox emulation on Android requires a high-performance 64-bit device.";
+        }
+        if (r != 0) return "ERROR: Xbox initialization failed with code " + std::to_string(r);
+
+        return "OK: " + result.message;
+    }
+
     // ── AUTO-DETECT fallback ─────────────────────────────────────────────
     else {
         const std::string lower = [&]{
@@ -160,7 +176,16 @@ if exist dune.bat dune.bat
         }();
 
         if (lower.ends_with(".bin") || lower.ends_with(".cue") ||
-            lower.ends_with(".img") || lower.ends_with(".iso")) {
+            lower.ends_with(".img") || lower.ends_with(".iso") ||
+            lower.ends_with(".xbe")) {
+
+            if (lower.ends_with(".xbe") || lower.find("xbox") != std::string::npos) {
+                auto result = retrorts::xbox::LaunchXboxGame(romPath);
+                if (!result.ok) return "ERROR: " + result.message;
+                int r = retrorts::xbox_init(result.resolvedRomPath.c_str(), result.resolvedBiosPath.c_str());
+                if (r == -10) return "ERROR: Xbox core not bundled.";
+                return r == 0 ? "OK: Xbox auto-detected" : "ERROR: Xbox error " + std::to_string(r);
+            }
 
             bool isPs2 = false;
             if (lower.ends_with(".iso")) {

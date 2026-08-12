@@ -129,6 +129,7 @@ add_library(pcsx_rearmed SHARED
     dsi_core.cpp
     ps1_core.cpp
     amiga_core.cpp
+    xbox_core.cpp
     amiga_uae_bridge_jni.cpp
     dosbox_bridge_jni.cpp
     dosbox_audio.cpp

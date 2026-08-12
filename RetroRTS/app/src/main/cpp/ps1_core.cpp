@@ -32,6 +32,16 @@ std::string toLower(std::string s) {
     return s;
 }
 
+bool IsKnownMultiTrackGame(const std::string& path) {
+    std::string lower = toLower(path);
+    // Add other known multi-track titles as needed
+    return lower.find("gta2") != std::string::npos ||
+           lower.find("gta 2") != std::string::npos ||
+           lower.find("tekken") != std::string::npos ||
+           lower.find("wipeout") != std::string::npos ||
+           lower.find("gran turismo") != std::string::npos;
+}
+
 std::string ext(const std::string& path) {
     auto pos = path.rfind('.');
     return pos == std::string::npos ? "" : toLower(path.substr(pos));
@@ -49,9 +59,13 @@ static std::string generateCue(const std::string& binPath,
         return sideBySideCue;
     }
 
-    // GTA2 and other multi-track games usually need a real .cue for audio.
-    // However, we will auto-generate a single-track cue anyway so the game
-    // at least BOOTS and is playable (just without CD music).
+    // 2. REFUSE to auto-generate for known multi-track games
+    if (IsKnownMultiTrackGame(binPath)) {
+        LOGE("Refusing auto-cue for known multi-track game: %s", filename.c_str());
+        return "";  // triggers the "need a real .cue" error
+    }
+
+    // 3. Safe to generate a single-track cue for everything else
     std::string cueName = filename.substr(0, filename.rfind('.')) + ".cue";
     std::string cuePath = cacheDir + "/" + cueName;
 

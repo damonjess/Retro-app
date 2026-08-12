@@ -10,7 +10,7 @@
 
 namespace retrorts {
 
-enum class CoreType { NONE, PS1, AMIGA, DOSBOX, NINTENDO_DSI };
+enum class CoreType { NONE, PS1, AMIGA, DOSBOX, NINTENDO_DSI, XBOX };
 
 class LibretroHost {
 public:
@@ -92,6 +92,7 @@ extern "C" {
     int uae_init(const char* rom_path, const char* bios_path);
     int dosbox_init(const char* config_path, const char* saveDir);
     int dsi_init(const char* rom_path);
+    int xbox_init(const char* rom_path, const char* bios_path);
 }
 
 } // namespace retrorts

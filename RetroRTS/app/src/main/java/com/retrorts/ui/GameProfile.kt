@@ -197,6 +197,18 @@ data class GameProfile(
             machine = "psx",
             platform = "ps1",
         )
+
+        fun presetXbox() = GameProfile(
+            gameId = "xbox_game_demo",
+            title = "Xbox Game",
+            os = "Original Xbox",
+            cycles = 0,
+            frameCap = 60,
+            memMb = 64,
+            mixerRate = 48000,
+            machine = "xbox",
+            platform = "xbox",
+        )
     }
 }
 
@@ -206,6 +218,7 @@ enum class ConsoleType {
     NINTENDO_DSI,
     PS1,
     PS2,
+    XBOX,
     UNKNOWN;
 
     companion object {
@@ -222,13 +235,19 @@ enum class ConsoleType {
                 n.endsWith(".bin") || n.endsWith(".cue") || n.endsWith(".img")
                     -> PS1
                 n.endsWith(".iso") -> {
-                    if (file.exists() && file.length() > 700 * 1024 * 1024) PS2 else PS1
+                    if (file.exists() && file.length() > 700 * 1024 * 1024) {
+                        // Heuristic: PS2 ISOs are large, Xbox ISOs (XISO) can also be large.
+                        // If path contains xbox, it's likely xbox.
+                        if (n.contains("xbox")) XBOX else PS2
+                    } else PS1
                 }
+                n.endsWith(".xbe") -> XBOX
                 // Heuristic for extensionless files
                 !file.name.contains(".") -> {
                     when {
                         parentName == "amiga" || n.contains("/amiga/") -> AMIGA
                         parentName == "dsi" || n.contains("/dsi/") -> NINTENDO_DSI
+                        parentName == "xbox" || n.contains("/xbox/") -> XBOX
                         else -> DOSBOX
                     }
                 }
@@ -253,6 +272,7 @@ object GameProfileStore {
             writeIfMissing(GameProfile.presetDuneIIAmiga())
             writeIfMissing(GameProfile.presetNintendoDsi())
             writeIfMissing(GameProfile.presetPs1())
+            writeIfMissing(GameProfile.presetXbox())
         }
     }
 
@@ -279,6 +299,7 @@ object GameProfileStore {
         "amiga" in key || "a500" in key -> "amiga_a500_demo"
         "dsi" in key || "nintendo ds" in key -> "nintendo_dsi_demo"
         "ps1" in key || "playstation" in key || "psx" in key -> "ps1_game_demo"
+        "xbox" in key -> "xbox_game_demo"
         else -> key.replace(" ", "_")
     }
 
@@ -289,6 +310,7 @@ object GameProfileStore {
         "amiga_a500_demo" -> GameProfile.presetAmigaA500()
         "nintendo_dsi_demo" -> GameProfile.presetNintendoDsi()
         "ps1_game_demo" -> GameProfile.presetPs1()
+        "xbox_game_demo" -> GameProfile.presetXbox()
         else -> GameProfile.presetDune2000Win98()
     }
 }
