@@ -97,10 +97,13 @@ AmigaLaunchResult LaunchAmigaGame(const std::string& romPath) {
         std::string errorMsg = "Amiga launch failed: invalid disk image format. Expected .adf, .hdf, or .dms file.\n";
 
         if (lowerName == "dune") {
-            errorMsg += "\n[DUNE II DETECTED]\n"
+            errorMsg += "\n[DUNE (1992) / DUNE II DETECTED]\n"
                         "It looks like you are trying to launch a loose 'dune' file.\n"
-                        "Recommended: Use a proper .adf or .hdf image.\n"
-                        "Quick Fix: If dropped into the shell, type 'textprotect dune +e' then 'dune'.";
+                        "Recommended: Use a proper .adf (floppy) or .hdf (hard disk) image.\n"
+                        "Quick Fix: If dropped into the AROS shell, type exactly:\n"
+                        "  textprotect dune +e\n"
+                        "  dune\n"
+                        "(Or use the 'Fix Dune' button in the app overlay)";
         } else if (lowerName.find("dune") != std::string::npos &&
                    (lowerName.find("disk 2") != std::string::npos || lowerName.find("disk 3") != std::string::npos ||
                     lowerName.find("disk2") != std::string::npos || lowerName.find("disk3") != std::string::npos)) {

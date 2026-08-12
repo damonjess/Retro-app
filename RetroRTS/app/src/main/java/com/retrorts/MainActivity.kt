@@ -26,6 +26,8 @@ import androidx.activity.result.ActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -51,9 +53,11 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
@@ -64,6 +68,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.lifecycleScope
+import com.retrorts.ui.AmigaBridge
+import com.retrorts.ui.AmigaUtils
 import com.retrorts.ui.ConsoleType
 import com.retrorts.ui.DosboxBridge
 import com.retrorts.ui.GameProfile
@@ -77,6 +83,20 @@ import java.io.InputStream
 import java.util.zip.ZipInputStream
 import android.widget.Toast
 import kotlin.math.roundToInt
+
+// Libretro Button Constants
+const val RETRO_DEVICE_ID_JOYPAD_B = 0
+const val RETRO_DEVICE_ID_JOYPAD_Y = 1
+const val RETRO_DEVICE_ID_JOYPAD_SELECT = 2
+const val RETRO_DEVICE_ID_JOYPAD_START = 3
+const val RETRO_DEVICE_ID_JOYPAD_UP = 4
+const val RETRO_DEVICE_ID_JOYPAD_DOWN = 5
+const val RETRO_DEVICE_ID_JOYPAD_LEFT = 6
+const val RETRO_DEVICE_ID_JOYPAD_RIGHT = 7
+const val RETRO_DEVICE_ID_JOYPAD_A = 8
+const val RETRO_DEVICE_ID_JOYPAD_X = 9
+const val RETRO_DEVICE_ID_JOYPAD_L = 10
+const val RETRO_DEVICE_ID_JOYPAD_R = 11
 
 data class GameEntry(
     val name: String,
@@ -292,6 +312,21 @@ private suspend fun launchGameWithNativeBackend(
                 "DOS launch failed: DOSBox-Pure native core is missing or could not start. " +
                     "Add the DOSBox-Pure AAR/native library to RetroRTS/app/libs and rebuild."
             )
+        }
+    }
+
+    if (game.consoleType == ConsoleType.AMIGA) {
+        if (!AmigaUtils.isKick13Present()) {
+            return@withContext LaunchResult(false, 
+                "Kickstart 1.3 ROM not found!\n\n" +
+                "Required: /sdcard/RetroRTS/system/amiga/kick13.rom\n" +
+                "Without this, Dune will drop to a shell or fail to boot.")
+        }
+        
+        if (AmigaUtils.isDuneMultiDisk(game.filePath)) {
+            return@withContext LaunchResult(false, 
+                "Warning: You are launching Disk 2 or 3.\n\n" +
+                "Dune must be started from Disk 1. Please launch 'Dune_Disk1.adf' instead.")
         }
     }
 
@@ -679,6 +714,22 @@ private fun LibraryTab(
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.weight(1f)
             )
+            Button(
+                onClick = {
+                    scope.launch(Dispatchers.IO) {
+                        val results = AmigaUtils.fixDuneFilenames()
+                        val fresh = GameLibrary.clearAndRescan(context)
+                        withContext(Dispatchers.Main) {
+                            games.clear()
+                            games.addAll(fresh)
+                            GameLibrary.save(context, fresh)
+                            Toast.makeText(context, results.joinToString("\n"), Toast.LENGTH_LONG).show()
+                        }
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF5D4037)),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+            ) { Text("Fix Amiga") }
             Button(
                 onClick = {
                     scope.launch(Dispatchers.IO) {
@@ -1154,15 +1205,22 @@ private fun DosboxPlayScreen(game: GameEntry, onExit: () -> Unit) {
     var showExitDialog by remember { mutableStateOf(false) }
     var showKeyboardDialog by remember { mutableStateOf(false) }
     var keyboardText by remember { mutableStateOf("") }
-    var saveSlot by remember { mutableStateOf(1) }
     var statusMsg by remember { mutableStateOf("") }
+    var currentMask by remember { mutableStateOf(0) }
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
 
     // Live perf stats — poll every second
     var fps by remember { mutableStateOf(0f) }
     var cpuPct by remember { mutableStateOf(0f) }
     
+    // Update input whenever currentMask changes
+    LaunchedEffect(currentMask) {
+        // Send input to BOTH port 0 and port 1.
+        // For Amiga, Port 1 is usually the Joystick (Port 2 in Amiga hardware).
+        NativeEmulatorBridge.updateInput(0, currentMask)
+        NativeEmulatorBridge.updateInput(1, currentMask)
+    }
+
     // Auto-detect high refresh rate
     LaunchedEffect(Unit) {
         if (game.name.lowercase().contains("dune") && game.consoleType == ConsoleType.AMIGA) {
@@ -1248,145 +1306,151 @@ private fun DosboxPlayScreen(game: GameEntry, onExit: () -> Unit) {
             }
         )
 
-        // ── HUD overlay ───────────────────────────────────────────────
-        Column(
+        // ── HUD overlay (Top) ─────────────────────────────────────────
+        Row(
             Modifier
-                .align(Alignment.TopStart)
+                .align(Alignment.TopCenter)
                 .statusBarsPadding()
-                .padding(8.dp)
+                .fillMaxWidth()
+                .padding(8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Top
         ) {
-            Text(
-                "${"%.0f".format(fps)} fps  •  ${"%.0f".format(cpuPct)}% cpu",
-                color = Color(0xAAD8C77A),
-                style = MaterialTheme.typography.labelSmall
-            )
-            if (statusMsg.isNotBlank()) {
-                Text(statusMsg, color = Color(0xFFD8C77A),
-                    style = MaterialTheme.typography.labelSmall)
+            Column {
+                Text(
+                    "${"%.0f".format(fps)} fps  •  ${"%.0f".format(cpuPct)}% cpu",
+                    color = Color(0xAAD8C77A),
+                    style = MaterialTheme.typography.labelSmall
+                )
+                if (statusMsg.isNotBlank()) {
+                    Text(statusMsg, color = Color(0xFFD8C77A),
+                        style = MaterialTheme.typography.labelSmall)
+                }
+            }
+            
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Utility buttons moved to top to clear the bottom for controls
+                IconButton(
+                    onClick = { NativeEmulatorBridge.updateInput(0, 1 shl 10) }, // L
+                    modifier = Modifier.background(Color(0x44FFFFFF), CircleShape).size(40.dp)
+                ) {
+                    Text("L", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+                
+                IconButton(
+                    onClick = { NativeEmulatorBridge.updateInput(0, 1 shl 11) }, // R
+                    modifier = Modifier.background(Color(0x44FFFFFF), CircleShape).size(40.dp)
+                ) {
+                    Text("R", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+
+                IconButton(
+                    onClick = { showKeyboardDialog = true },
+                    modifier = Modifier.background(Color(0x44FFFFFF), CircleShape).size(40.dp)
+                ) {
+                    Icon(Icons.Filled.Keyboard, contentDescription = "Keyboard", tint = Color.White)
+                }
+                
+                IconButton(
+                    onClick = { showExitDialog = true },
+                    modifier = Modifier.background(Color(0x448B2020), CircleShape).size(40.dp)
+                ) {
+                    Text("✕", color = Color.White, fontWeight = FontWeight.Bold)
+                }
             }
         }
 
-        // ── Bottom toolbar ────────────────────────────────────────────
-        Column(
+        // ── Virtual Gamepad (Bottom) ──────────────────────────────────
+        Box(
             Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .background(Color(0xCC000000))
                 .navigationBarsPadding()
-                .padding(8.dp)
+                .padding(bottom = 16.dp)
         ) {
-            // Save/load slot row
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Slot:", color = Color.White)
-                (1..3).forEach { slot ->
-                    val selected = slot == saveSlot
-                    Button(
-                        onClick = { saveSlot = slot },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (selected) Color(0xFF6D7F3B) else Color(0xFF3A3A3A)
-                        ),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                        modifier = Modifier.height(32.dp)
-                    ) { Text("$slot") }
-                }
-                Spacer(Modifier.weight(1f))
-                Button(
-                    onClick = {
-                        scope.launch(Dispatchers.IO) {
-                            val dir = "${android.os.Environment.getExternalStorageDirectory()}/RetroRTS/saves"
-                            java.io.File(dir).mkdirs()
-                            val path = "$dir/${game.gameId}_slot$saveSlot.sav"
-                            val ok = DosboxBridge.saveState(game.gameId, saveSlot, path)
-                            withContext(Dispatchers.Main) {
-                                statusMsg = if (ok) "Saved slot $saveSlot ✓" else "Save failed"
-                            }
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A5A3A))
-                ) { Text("Save") }
-                Button(
-                    onClick = {
-                        scope.launch(Dispatchers.IO) {
-                            val path = "${android.os.Environment.getExternalStorageDirectory()}" +
-                                       "/RetroRTS/saves/${game.gameId}_slot$saveSlot.sav"
-                            val ok = DosboxBridge.loadState(game.gameId, saveSlot, path)
-                            withContext(Dispatchers.Main) {
-                                statusMsg = if (ok) "Loaded slot $saveSlot ✓" else "No save in slot $saveSlot"
-                            }
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A3A5A))
-                ) { Text("Load") }
-            }
-
-            // Gamepad row
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                RtsOverlay(Modifier.weight(1f), game.consoleType, onExit) {
-                    showKeyboardDialog = true
-                }
-            }
+            VirtualGamepad { currentMask = it }
         }
     }
 }
 
-// Keep RtsOverlay as before but remove the outer Box that filled the whole
-// screen — it now lives inside the bottom toolbar row:
 @Composable
-private fun RtsOverlay(
-    modifier: Modifier,
-    consoleType: ConsoleType,
-    onExit: () -> Unit,
-    onKeyboard: () -> Unit
+private fun VirtualGamepad(
+    modifier: Modifier = Modifier,
+    onMaskChange: (Int) -> Unit
 ) {
+    var mask by remember { mutableStateOf(0) }
+
+    fun updateBits(bits: List<Int>, down: Boolean) {
+        var newMask = mask
+        bits.forEach { bit ->
+            newMask = if (down) newMask or (1 shl bit) else newMask and (1 shl bit).inv()
+        }
+        if (newMask != mask) {
+            mask = newMask
+            onMaskChange(mask)
+        }
+    }
+
     Row(
-        modifier = modifier.padding(4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Button(
-            onClick = { NativeEmulatorBridge.updateInput(0, 1 shl 10) }, // L
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A3A3A))
-        ) { Text("L") }
-        Button(
-            onClick = { NativeEmulatorBridge.updateInput(0, 1 shl 11) }, // R
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A3A3A))
-        ) { Text("R") }
-        Button(
-            onClick = onKeyboard,
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A3A3A)),
-            contentPadding = PaddingValues(horizontal = 8.dp)
-        ) {
-            Icon(Icons.Filled.Keyboard, contentDescription = "Keyboard", tint = Color.White)
+        // ── D-Pad ─────────────────────────────────────────────────────
+        Box(Modifier.size(160.dp)) {
+            // Background circle
+            Box(Modifier.fillMaxSize().background(Color(0x33FFFFFF), CircleShape).border(2.dp, Color(0x66FFFFFF), CircleShape))
+            
+            // Buttons in a grid-like cross
+            GamepadButton(Modifier.align(Alignment.TopCenter), "▲") { updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_UP), it) }
+            GamepadButton(Modifier.align(Alignment.BottomCenter), "▼") { updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_DOWN), it) }
+            GamepadButton(Modifier.align(Alignment.CenterStart), "◀") { updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_LEFT), it) }
+            GamepadButton(Modifier.align(Alignment.CenterEnd), "▶") { updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_RIGHT), it) }
         }
 
-        if (consoleType == ConsoleType.AMIGA) {
-            Button(
-                onClick = {
-                    // Try multiple possible commands for different Amiga shell environments
-                    NativeEmulatorBridge.sendKeyString("protect dune +e\n")
-                    NativeEmulatorBridge.sendKeyString("textprotect dune +e\n")
-                    NativeEmulatorBridge.sendKeyString("dune\n")
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF5D4037)),
-                contentPadding = PaddingValues(horizontal = 8.dp)
-            ) {
-                Text("Fix Dune (1992)", style = MaterialTheme.typography.labelSmall)
+        // ── Action Buttons ────────────────────────────────────────────
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            // Amiga Fire 1 is usually B or A in Libretro. We map to both for compatibility.
+            GamepadButton(Modifier.size(80.dp), "FIRE", Color(0xFF8B2020)) { updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_B, RETRO_DEVICE_ID_JOYPAD_A), it) }
+            GamepadButton(Modifier.size(80.dp), "2", Color(0xFF3A3A6A)) { updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_Y, RETRO_DEVICE_ID_JOYPAD_X), it) }
+        }
+    }
+}
+
+@Composable
+private fun GamepadButton(
+    modifier: Modifier = Modifier,
+    label: String,
+    color: Color = Color(0x99444444),
+    onPressed: (Boolean) -> Unit
+) {
+    var isPressed by remember { mutableStateOf(false) }
+    
+    Surface(
+        color = if (isPressed) color.copy(alpha = 1f) else color,
+        shape = CircleShape,
+        modifier = modifier
+            .size(60.dp)
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        awaitFirstDown()
+                        isPressed = true
+                        onPressed(true)
+                        
+                        waitForUpOrCancellation()
+                        isPressed = false
+                        onPressed(false)
+                    }
+                }
             }
+            .then(if (isPressed) Modifier.scale(0.9f) else Modifier)
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(label, color = Color.White, fontWeight = FontWeight.Bold)
         }
-
-        Spacer(Modifier.weight(1f))
-        Button(
-            onClick = onExit,
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B2020))
-        ) { Text("Exit") }
     }
 }
 

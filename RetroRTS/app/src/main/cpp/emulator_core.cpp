@@ -128,8 +128,8 @@ if exist dune.bat dune.bat
         if (!result.ok) return "ERROR: " + result.message;
 
         // Pass the ADF directly to the libretro core.
-        // PUAE will auto-detect kick13.rom from /sdcard/RetroRTS/system/amiga/
-        int r = retrorts::uae_init(result.resolvedRomPath.c_str());
+        // We explicitly tell PUAE which Kickstart to use via core options (puae_kickstart)
+        int r = retrorts::uae_init(result.resolvedRomPath.c_str(), result.resolvedBiosPath.c_str());
         if (r != 0) {
             return "ERROR: UAE initialization failed via bridge with code " + std::to_string(r);
         }

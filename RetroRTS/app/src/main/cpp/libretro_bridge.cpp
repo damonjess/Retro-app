@@ -35,6 +35,54 @@ LibretroHost& LibretroHost::getInstance() {
 
 LibretroHost::LibretroHost() = default;
 
+bool LibretroHost::initAudio(double sampleRate) {
+    deinitAudio();
+    lastSampleRate_ = sampleRate;
+    LOGI("Initializing AAudio at %.2f Hz", sampleRate);
+
+    AAudioStreamBuilder* builder;
+    aaudio_result_t result = AAudio_createStreamBuilder(&builder);
+    if (result != AAUDIO_OK) return false;
+
+    AAudioStreamBuilder_setSampleRate(builder, (int32_t)sampleRate);
+    AAudioStreamBuilder_setChannelCount(builder, 2);
+    AAudioStreamBuilder_setFormat(builder, AAUDIO_FORMAT_PCM_I16);
+    AAudioStreamBuilder_setPerformanceMode(builder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
+    AAudioStreamBuilder_setUsage(builder, AAUDIO_USAGE_GAME);
+    AAudioStreamBuilder_setSharingMode(builder, AAUDIO_SHARING_MODE_SHARED);
+
+    result = AAudioStreamBuilder_openStream(builder, &audioStream_);
+    AAudioStreamBuilder_delete(builder);
+
+    if (result != AAUDIO_OK) {
+        LOGE("Failed to open AAudio stream: %s", AAudio_convertResultToText(result));
+        return false;
+    }
+
+    // Increased buffer size to the full capacity to handle jitter better.
+    int32_t capacity = AAudioStream_getBufferCapacityInFrames(audioStream_);
+    AAudioStream_setBufferSizeInFrames(audioStream_, capacity);
+    LOGI("AAudio stream opened: capacity=%d, bufferSize=%d", capacity, AAudioStream_getBufferSizeInFrames(audioStream_));
+
+    result = AAudioStream_requestStart(audioStream_);
+    if (result != AAUDIO_OK) {
+        LOGE("Failed to start AAudio stream: %s", AAudio_convertResultToText(result));
+        AAudioStream_close(audioStream_);
+        audioStream_ = nullptr;
+        return false;
+    }
+
+    return true;
+}
+
+void LibretroHost::deinitAudio() {
+    if (audioStream_) {
+        AAudioStream_requestStop(audioStream_);
+        AAudioStream_close(audioStream_);
+        audioStream_ = nullptr;
+    }
+}
+
 LibretroHost::~LibretroHost() {
     stop();
 }
@@ -56,6 +104,7 @@ int LibretroHost::loadCore(const std::string& corePath) {
     retro_init_fn = (void (*)())dlsym(coreLib_, "retro_init");
     retro_deinit_fn = (void (*)())dlsym(coreLib_, "retro_deinit");
     retro_run_fn = (void (*)())dlsym(coreLib_, "retro_run");
+    retro_get_system_av_info_fn = (void (*)(struct retro_system_av_info*))dlsym(coreLib_, "retro_get_system_av_info");
     retro_load_game_fn = (bool (*)(const struct retro_game_info*))dlsym(coreLib_, "retro_load_game");
     retro_unload_game_fn = (void (*)())dlsym(coreLib_, "retro_unload_game");
     retro_set_environment_fn = (void (*)(retro_environment_t))dlsym(coreLib_, "retro_set_environment");
@@ -67,7 +116,7 @@ int LibretroHost::loadCore(const std::string& corePath) {
 
     if (!retro_init_fn || !retro_run_fn || !retro_load_game_fn || !retro_set_environment_fn ||
         !retro_set_video_refresh_fn || !retro_set_audio_sample_fn || !retro_set_audio_sample_batch_fn ||
-        !retro_set_input_poll_fn || !retro_set_input_state_fn) {
+        !retro_set_input_poll_fn || !retro_set_input_state_fn || !retro_get_system_av_info_fn) {
         LOGE("Core is missing essential symbols");
         dlclose(coreLib_);
         coreLib_ = nullptr;
@@ -132,6 +181,10 @@ int LibretroHost::loadGame(const std::string& romPath) {
         return -2;
     }
 
+    struct retro_system_av_info av_info;
+    retro_get_system_av_info_fn(&av_info);
+    initAudio(av_info.timing.sample_rate);
+
     running_.store(true);
     LOGI("Game loaded: %s", romPath.c_str());
     return 0;
@@ -161,7 +214,9 @@ void LibretroHost::runLoop() {
 
             if (retro_run_fn) retro_run_fn();
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        // Removed sleep_for(1). The audio write in audioBatchCallback
+        // will block when the buffer is full, providing natural sync.
+
         if (++frames == 1 || frames % 3000 == 0) {
             LOGI("runLoop: still running (%d frames)", frames);
         }
@@ -185,6 +240,7 @@ void LibretroHost::setWindow(ANativeWindow* window) {
 void LibretroHost::stop() {
     running_.store(false);
     std::lock_guard<std::recursive_mutex> lock(coreMutex_);
+    deinitAudio();
     if (window_) {
         ANativeWindow_release(window_);
         window_ = nullptr;
@@ -244,6 +300,12 @@ bool LibretroHost::envCallback(unsigned cmd, void* data) {
                 if (key == "puae_video_standard") {
                     var->value = "PAL";
                     return true;
+                }
+                if (key == "puae_kickstart") {
+                    if (!host.amigaKickstart_.empty()) {
+                        var->value = host.amigaKickstart_.c_str();
+                        return true;
+                    }
                 }
             }
             return true;
@@ -336,6 +398,24 @@ void LibretroHost::audioCallback(int16_t left, int16_t right) {
 }
 
 size_t LibretroHost::audioBatchCallback(const int16_t* data, size_t frames) {
+    auto& host = getInstance();
+    if (host.audioStream_) {
+        aaudio_stream_state_t state = AAudioStream_getState(host.audioStream_);
+        if (state == AAUDIO_STREAM_STATE_DISCONNECTED) {
+             LOGE("AAudio stream disconnected, attempting restart...");
+             host.initAudio(host.lastSampleRate_);
+             return 0;
+        }
+
+        // Use a timeout to allow blocking if the buffer is full.
+        aaudio_result_t result = AAudioStream_write(host.audioStream_, data, (int32_t)frames, 100000000);
+        if (result >= 0) return (size_t)result;
+
+        if (result == AAUDIO_ERROR_DISCONNECTED || result == AAUDIO_ERROR_INVALID_STATE) {
+            LOGE("AAudio write failed: %s. Attempting to restart...", AAudio_convertResultToText(result));
+            host.initAudio(host.lastSampleRate_);
+        }
+    }
     return frames;
 }
 
@@ -372,13 +452,25 @@ extern "C" int PCSX_Run(const char* bios, const char* disc, const char* saveDir)
     return 0;
 }
 
-extern "C" int uae_init(const char* rom_path) {
-    LOGI("Bridge: uae_init called for %s", rom_path);
+extern "C" int uae_init(const char* rom_path, const char* bios_path) {
+    LOGI("Bridge: uae_init called for %s (bios=%s)", rom_path, bios_path ? bios_path : "none");
     auto& host = LibretroHost::getInstance();
     host.stop();
     host.setCoreType(CoreType::AMIGA);
     host.setSystemDir("/storage/emulated/0/RetroRTS/system/amiga");
     host.setSaveDir("/storage/emulated/0/RetroRTS/Saves/Amiga");
+
+    if (bios_path) {
+        std::string bp = bios_path;
+        auto pos = bp.rfind('/');
+        if (pos != std::string::npos) {
+            host.setAmigaKickstart(bp.substr(pos + 1));
+        } else {
+            host.setAmigaKickstart(bp);
+        }
+    } else {
+        host.setAmigaKickstart("");
+    }
 
     if (host.loadCore("libpuae_libretro.so") != 0) {
         if (host.loadCore("libpuae.so") != 0) return -1;

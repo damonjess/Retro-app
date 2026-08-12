@@ -39,7 +39,7 @@ Java_com_retrorts_ui_AmigaBridge_startAmigaNative(
         return JNI_FALSE;
     }
 
-    int init_result = retrorts::uae_init(gpath);
+    int init_result = retrorts::uae_init(validation.resolvedRomPath.c_str(), validation.resolvedBiosPath.c_str());
     if (init_result != 0) {
         LOGE("UAE initialization failed via bridge with code %d", init_result);
         env->ReleaseStringUTFChars(gamePath, gpath);

@@ -5,6 +5,7 @@
 #include <mutex>
 #include <vector>
 #include <android/native_window.h>
+#include <aaudio/AAudio.h>
 #include "libretro.h"
 
 namespace retrorts {
@@ -28,6 +29,7 @@ public:
     void setSystemDir(const std::string& dir) { systemDir_ = dir; }
     void setSaveDir(const std::string& dir) { saveDir_ = dir; }
     void setCoreType(CoreType type) { coreType_ = type; }
+    void setAmigaKickstart(const std::string& filename) { amigaKickstart_ = filename; }
 
     static bool envCallback(unsigned cmd, void* data);
     static void videoCallback(const void* data, unsigned width, unsigned height, size_t pitch);
@@ -49,6 +51,8 @@ private:
 
     std::string systemDir_;
     std::string saveDir_;
+    std::string amigaKickstart_;
+    double lastSampleRate_ = 44100.0;
     CoreType coreType_ = CoreType::NONE;
     retro_keyboard_event_t keyboard_cb_ = nullptr;
 
@@ -60,9 +64,14 @@ private:
     std::vector<KeyboardEvent> keyEventQueue_;
     std::mutex queueMutex_;
 
+    AAudioStream* audioStream_ = nullptr;
+    bool initAudio(double sampleRate);
+    void deinitAudio();
+
     void (*retro_init_fn)() = nullptr;
     void (*retro_deinit_fn)() = nullptr;
     void (*retro_run_fn)() = nullptr;
+    void (*retro_get_system_av_info_fn)(struct retro_system_av_info*) = nullptr;
     bool (*retro_load_game_fn)(const struct retro_game_info*) = nullptr;
     void (*retro_unload_game_fn)() = nullptr;
     void (*retro_set_environment_fn)(retro_environment_t) = nullptr;
@@ -75,7 +84,7 @@ private:
 
 extern "C" {
     int PCSX_Run(const char* bios, const char* disc, const char* saveDir);
-    int uae_init(const char* rom_path);
+    int uae_init(const char* rom_path, const char* bios_path);
     int dosbox_init(const char* config_path, const char* saveDir);
     int dsi_init(const char* rom_path);
 }
