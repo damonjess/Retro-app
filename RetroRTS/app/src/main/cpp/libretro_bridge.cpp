@@ -67,7 +67,12 @@ LibretroHost& LibretroHost::getInstance() {
     return instance;
 }
 
-LibretroHost::LibretroHost() = default;
+LibretroHost::LibretroHost() {
+    for (int p = 0; p < 2; p++)
+        for (int i = 0; i < 2; i++)
+            for (int a = 0; a < 2; a++)
+                analogState_[p][i][a].store(0);
+}
 
 bool LibretroHost::initAudio(double sampleRate) {
     deinitAudio();
@@ -245,52 +250,11 @@ void LibretroHost::updateJoypad(int port, uint16_t state) {
     if (port >= 0 && port < 2) {
         padState_[port].store(state);
     }
+}
 
-    if (coreType_ == CoreType::AMIGA) {
-        uint16_t anyBtn = padState_[0].load() | padState_[1].load();
-        // Everything EXCEPT D-pad directions (UP=4, DOWN=5, LEFT=6, RIGHT=7)
-        static const uint16_t CLICK_MASK =
-            (1U<<0) | (1U<<1) | (1U<<2) | (1U<<3) |
-            (1U<<8) | (1U<<9) | (1U<<10) | (1U<<11) |
-            (1U<<12) | (1U<<13) | (1U<<14) | (1U<<15);
-
-        bool pressed = (anyBtn & CLICK_MASK) != 0;
-
-        // ---- Sustained mouse click (500 ms) ----
-        if (pressed) {
-            using namespace std::chrono;
-            int64_t now = duration_cast<milliseconds>(
-                steady_clock::now().time_since_epoch()).count();
-            mouseHoldUntil_.store(now + 500);
-            mouseButtons_.fetch_or(1);
-        } else {
-            using namespace std::chrono;
-            int64_t now = duration_cast<milliseconds>(
-                steady_clock::now().time_since_epoch()).count();
-            if (now > mouseHoldUntil_.load()) {
-                mouseButtons_.fetch_and(~1);
-            }
-        }
-
-        // ---- Keyboard mirror: Space + Enter ----
-        // CRITICAL: We must push to keyEventQueue_ so that keyboard_cb_ is called.
-        // PUAE uses the callback for keyboard input, not just input_state_cb.
-        bool oldKeyState = keyState_[RETROK_SPACE].load();
-        if (pressed != oldKeyState) {
-            keyState_[RETROK_SPACE].store(pressed);
-            keyState_[RETROK_RETURN].store(pressed);
-
-            std::lock_guard<std::mutex> qlock(queueMutex_);
-            keyEventQueue_.push_back({pressed, (unsigned)RETROK_SPACE, (uint32_t)' '});
-            keyEventQueue_.push_back({pressed, (unsigned)RETROK_RETURN, (uint32_t)'\r'});
-
-            LOGE("Amiga Keyboard Mirror: %s (Space/Return)", pressed ? "DOWN" : "UP");
-        }
-
-        if (anyBtn != 0) {
-            LOGE("updateJoypad (Amiga): anyBtn=0x%04X pressed=%d mouseBtns=%d",
-                 anyBtn, pressed ? 1 : 0, mouseButtons_.load() & 1);
-        }
+void LibretroHost::updateAnalog(int port, int index, int id, int16_t value) {
+    if (port >= 0 && port < 2 && index >= 0 && index < 2 && id >= 0 && id < 2) {
+        analogState_[port][index][id].store(value);
     }
 }
 
@@ -367,6 +331,12 @@ int LibretroHost::loadGame(const std::string& romPath) {
     retro_get_system_av_info_fn(&av_info);
     initAudio(av_info.timing.sample_rate);
 
+    lastStatsTime_ = std::chrono::steady_clock::now();
+    frameCount_.store(0);
+    totalRunTimeUs_.store(0);
+    currentFps_.store(0.0f);
+    currentCpu_.store(0.0f);
+
     running_.store(true);
     LOGI("Game loaded: %s", romPath.c_str());
     return 0;
@@ -374,8 +344,8 @@ int LibretroHost::loadGame(const std::string& romPath) {
 
 void LibretroHost::runLoop() {
     LOGI("runLoop: started");
-    int frames = 0;
     while (running_.load()) {
+        auto start = std::chrono::steady_clock::now();
         {
             std::lock_guard<std::recursive_mutex> lock(coreMutex_);
 
@@ -396,12 +366,22 @@ void LibretroHost::runLoop() {
 
             if (retro_run_fn) retro_run_fn();
         }
+
+        auto end = std::chrono::steady_clock::now();
+        totalRunTimeUs_.fetch_add(std::chrono::duration_cast<std::chrono::microseconds>(end - start).count());
+
+        // Update stats every second
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastStatsTime_).count();
+        if (elapsed >= 1000) {
+            currentFps_.store((float)frameCount_.exchange(0) * 1000.0f / elapsed);
+            // cpu % = (time spent in run / total time) * 100
+            currentCpu_.store((float)totalRunTimeUs_.exchange(0) / (elapsed * 10.0f));
+            lastStatsTime_ = now;
+        }
+
         // Removed sleep_for(1). The audio write in audioBatchCallback
         // will block when the buffer is full, providing natural sync.
-
-        if (++frames == 1 || frames % 3000 == 0) {
-            LOGI("runLoop: still running (%d frames)", frames);
-        }
     }
     LOGI("runLoop: exited");
 }
@@ -440,11 +420,21 @@ void LibretroHost::stop() {
 
 bool LibretroHost::envCallback(unsigned cmd, void* data) {
     auto& host = getInstance();
+    if (!data && (cmd == RETRO_ENVIRONMENT_GET_VARIABLE || cmd == RETRO_ENVIRONMENT_SET_PIXEL_FORMAT ||
+                  cmd == RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY || cmd == RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY)) {
+        return false;
+    }
+
     switch (cmd) {
         case RETRO_ENVIRONMENT_GET_CAN_DUPE:
             *(bool*)data = true;
             return true;
-        case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
+        case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT: {
+            auto format = *static_cast<const enum retro_pixel_format*>(data);
+            host.pixelFormat_ = format;
+            LOGI("envCallback: Core set pixel format to %d", (int)format);
+            return true;
+        }
         case RETRO_ENVIRONMENT_SET_VARIABLES:
         case RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME:
             return true;
@@ -492,6 +482,8 @@ bool LibretroHost::envCallback(unsigned cmd, void* data) {
             if (!var || !var->key) return false;
 
             std::string key = var->key;
+            LOGI("envCallback: Core requested variable: %s", key.c_str());
+
             if (host.coreType_ == CoreType::AMIGA) {
                 if (key == "puae_model") {
                     var->value = "A500";
@@ -504,8 +496,53 @@ bool LibretroHost::envCallback(unsigned cmd, void* data) {
                 if (key == "puae_kickstart") {
                     if (!host.amigaKickstart_.empty()) {
                         var->value = host.amigaKickstart_.c_str();
+                        LOGI("envCallback: Providing kickstart: %s", var->value);
                         return true;
                     }
+                }
+                if (key == "puae_cpu_speed") {
+                    var->value = "real";
+                    return true;
+                }
+                if (key == "puae_cpu_compatible") {
+                    var->value = "true";
+                    return true;
+                }
+                if (key == "puae_immediate_blitter") {
+                    var->value = "false";
+                    return true;
+                }
+                if (key == "puae_chipmem_size") {
+                    var->value = "2"; // 1M
+                    return true;
+                }
+                if (key == "puae_bogomem_size") {
+                    var->value = "2"; // 0.5M
+                    return true;
+                }
+                if (key == "puae_sound_stereo_separation") {
+                    var->value = "100%";
+                    return true;
+                }
+                if (key == "puae_sound_filter") {
+                    var->value = "emulated";
+                    return true;
+                }
+                if (key == "puae_mouse_mode") {
+                    var->value = "joypad";
+                    return true;
+                }
+                if (key == "puaemouse") {
+                    var->value = "joypad";
+                    return true;
+                }
+                if (key == "mouse") {
+                    var->value = "joypad";
+                    return true;
+                }
+                if (key == "puae_mouse_speed") {
+                    var->value = "100";
+                    return true;
                 }
             }
             // For other variables, return false so the core uses defaults
@@ -524,6 +561,8 @@ bool LibretroHost::envCallback(unsigned cmd, void* data) {
 void LibretroHost::videoCallback(const void* data, unsigned width, unsigned height, size_t pitch) {
     if (!data) return;
     auto& host = getInstance();
+    host.frameCount_.fetch_add(1);
+
     std::lock_guard<std::recursive_mutex> lock(host.coreMutex_);
     if (!host.window_) {
         static bool logged = false;
@@ -538,48 +577,80 @@ void LibretroHost::videoCallback(const void* data, unsigned width, unsigned heig
     if (ANativeWindow_lock(host.window_, &buffer, nullptr) != 0) return;
 
     auto* dst = static_cast<uint32_t*>(buffer.bits);
-    auto* src = static_cast<const uint16_t*>(data);
 
     int dstW = buffer.width;
     int dstH = buffer.height;
     int srcW = static_cast<int>(width);
     int srcH = static_cast<int>(height);
 
-    // 1. Clear entire surface to black
-    for (int y = 0; y < dstH; y++) {
-        uint32_t* row = dst + y * buffer.stride;
-        for (int x = 0; x < dstW; x++) {
-            row[x] = 0xFF000000;
-        }
-    }
-
-    // 2. Calculate aspect-ratio-preserving scale
+    // 1. Calculate aspect-ratio-preserving scale
     float scaleX = static_cast<float>(dstW) / static_cast<float>(srcW);
     float scaleY = static_cast<float>(dstH) / static_cast<float>(srcH);
-    float scale = std::min(scaleX, scaleY);   // use std::max if you want stretch-to-fill
+    float scale = std::min(scaleX, scaleY);
 
     int drawW = static_cast<int>(static_cast<float>(srcW) * scale);
     int drawH = static_cast<int>(static_cast<float>(srcH) * scale);
     int offsetX = (dstW - drawW) / 2;
     int offsetY = (dstH - drawH) / 2;
 
-    // 3. Nearest-neighbor blit
-    for (int y = 0; y < drawH; y++) {
-        int srcY = static_cast<int>(static_cast<float>(y) / scale);
-        if (srcY >= srcH) srcY = srcH - 1;
-        const uint16_t* src_row = src + srcY * (pitch / 2);
-        uint32_t* dst_row = dst + (y + offsetY) * buffer.stride + offsetX;
+    // 2. Clear black bars (only if necessary)
+    if (offsetY > 0) {
+        // Top bar
+        for (int y = 0; y < offsetY; y++) {
+            uint32_t* row = dst + y * buffer.stride;
+            std::fill(row, row + dstW, 0xFF000000);
+        }
+        // Bottom bar
+        for (int y = offsetY + drawH; y < dstH; y++) {
+            uint32_t* row = dst + y * buffer.stride;
+            std::fill(row, row + dstW, 0xFF000000);
+        }
+    }
+    if (offsetX > 0) {
+        // Left and right bars for the middle section
+        for (int y = offsetY; y < offsetY + drawH; y++) {
+            uint32_t* row = dst + y * buffer.stride;
+            std::fill(row, row + offsetX, 0xFF000000);
+            std::fill(row + offsetX + drawW, row + dstW, 0xFF000000);
+        }
+    }
 
-        for (int x = 0; x < drawW; x++) {
-            int srcX = static_cast<int>(static_cast<float>(x) / scale);
-            if (srcX >= srcW) srcX = srcW - 1;
-            uint16_t px = src_row[srcX];
+    // 3. Blit based on pixel format
+    if (host.pixelFormat_ == RETRO_PIXEL_FORMAT_XRGB8888) {
+        auto* src = static_cast<const uint32_t*>(data);
+        for (int y = 0; y < drawH; y++) {
+            int srcY = static_cast<int>(static_cast<float>(y) / scale);
+            if (srcY >= srcH) srcY = srcH - 1;
+            const uint32_t* src_row = src + srcY * (pitch / 4);
+            uint32_t* dst_row = dst + (y + offsetY) * buffer.stride + offsetX;
 
-            // RGB565 -> RGBX8888
-            uint8_t r = (px >> 11) << 3;
-            uint8_t g = ((px >> 5) & 0x3F) << 2;
-            uint8_t b = (px & 0x1F) << 3;
-            dst_row[x] = (0xFFu << 24) | (b << 16) | (g << 8) | r;
+            for (int x = 0; x < drawW; x++) {
+                int srcX = static_cast<int>(static_cast<float>(x) / scale);
+                if (srcX >= srcW) srcX = srcW - 1;
+                // Add alpha channel if missing
+                dst_row[x] = src_row[srcX] | 0xFF000000;
+            }
+        }
+    } else {
+        // Default: RGB565
+        auto* src = static_cast<const uint16_t*>(data);
+        for (int y = 0; y < drawH; y++) {
+            int srcY = static_cast<int>(static_cast<float>(y) / scale);
+            if (srcY >= srcH) srcY = srcH - 1;
+            const uint16_t* src_row = src + srcY * (pitch / 2);
+            uint32_t* dst_row = dst + (y + offsetY) * buffer.stride + offsetX;
+
+            for (int x = 0; x < drawW; x++) {
+                int srcX = static_cast<int>(static_cast<float>(x) / scale);
+                if (srcX >= srcW) srcX = srcW - 1;
+                uint16_t px = src_row[srcX];
+
+                // RGB565 -> RGBX8888
+                uint8_t r = (px >> 11) << 3;
+                uint8_t g = ((px >> 5) & 0x3F) << 2;
+                uint8_t b = (px & 0x1F) << 3;
+                dst_row[x] = (0xFFu << 24) | (b << 16) | (g << 8) | r;
+            }
         }
     }
 
@@ -600,24 +671,27 @@ void LibretroHost::audioCallback(int16_t left, int16_t right) {
 
 size_t LibretroHost::audioBatchCallback(const int16_t* data, size_t frames) {
     auto& host = getInstance();
-    if (host.audioStream_) {
-        aaudio_stream_state_t state = AAudioStream_getState(host.audioStream_);
-        if (state == AAUDIO_STREAM_STATE_DISCONNECTED) {
-             LOGE("AAudio stream disconnected, attempting restart...");
-             host.initAudio(host.lastSampleRate_);
-             return 0;
-        }
+    if (!host.audioStream_) return 0;
 
-        // Use a timeout to allow blocking if the buffer is full.
-        aaudio_result_t result = AAudioStream_write(host.audioStream_, data, (int32_t)frames, 100000000);
-        if (result >= 0) return (size_t)result;
-
-        if (result == AAUDIO_ERROR_DISCONNECTED || result == AAUDIO_ERROR_INVALID_STATE) {
-            LOGE("AAudio write failed: %s. Attempting to restart...", AAudio_convertResultToText(result));
-            host.initAudio(host.lastSampleRate_);
-        }
+    aaudio_stream_state_t state = AAudioStream_getState(host.audioStream_);
+    if (state == AAUDIO_STREAM_STATE_DISCONNECTED) {
+        LOGE("AAudio stream disconnected, attempting restart...");
+        host.initAudio(host.lastSampleRate_);
+        return 0;
     }
-    return frames;
+
+    // Blocking write to maintain sync with core.
+    // Libretro cores generally expect the audio callback to block when the buffer is full.
+    aaudio_result_t result = AAudioStream_write(host.audioStream_, data, (int32_t)frames, 100000000); // 100ms
+    if (result >= 0) return (size_t)result;
+
+    if (result == AAUDIO_ERROR_TIMEOUT) {
+        return 0; // Tell core we wrote nothing, try again.
+    }
+
+    LOGE("AAudio write error: %s", AAudio_convertResultToText(result));
+    host.initAudio(host.lastSampleRate_);
+    return 0;
 }
 
 void LibretroHost::inputPollCallback() {
@@ -627,26 +701,39 @@ int16_t LibretroHost::inputStateCallback(unsigned port, unsigned device, unsigne
     auto& host = getInstance();
     if (port >= 2) return 0;
 
-    // Verbose logging for Amiga to see what core is asking for
-    static int global_counter = 0;
-    if (host.coreType_ == CoreType::AMIGA && ++global_counter % 2000 == 0) {
-        LOGE("inputStateCallback: Core is asking for device=%u on port=%u (id=%u)", device, port, id);
+    if (device == RETRO_DEVICE_JOYPAD) {
+        return (host.padState_[port].load() & (1U << id)) ? 1 : 0;
     }
 
-    if (device == RETRO_DEVICE_JOYPAD) {
-        int16_t v = (host.padState_[port].load() & (1U << id)) ? 1 : 0;
-        if (v && host.coreType_ == CoreType::AMIGA) {
-            LOGE("inputStateCallback: JOYPAD port=%u id=%u -> 1", port, id);
+    if (device == RETRO_DEVICE_ANALOG) {
+        if (port < 2 && index < 2 && id < 2) {
+            return host.analogState_[port][index][id].load();
         }
-        return v;
+        return 0;
     }
 
     if (device == RETRO_DEVICE_MOUSE) {
-        // Log every mouse query if button is pressed, otherwise every 100th
-        bool btn = (host.mouseButtons_.load() & 1) != 0;
-        static int mc = 0;
-        if (btn || (++mc % 100 == 0)) {
-            LOGE("inputStateCallback: MOUSE port=%u id=%u (btn_active=%d)", port, id, btn ? 1 : 0);
+        if (host.coreType_ == CoreType::AMIGA && port == 0) {
+            switch (id) {
+                case RETRO_DEVICE_ID_MOUSE_X: {
+                    int16_t stickX = host.analogState_[0][0][0].load();
+                    int16_t stickDelta = (stickX != 0) ? (stickX / 2500) : 0;
+                    return stickDelta + host.mouseX_.exchange(0);
+                }
+                case RETRO_DEVICE_ID_MOUSE_Y: {
+                    int16_t stickY = host.analogState_[0][0][1].load();
+                    int16_t stickDelta = (stickY != 0) ? (stickY / 2500) : 0;
+                    return stickDelta + host.mouseY_.exchange(0);
+                }
+                case RETRO_DEVICE_ID_MOUSE_LEFT:
+                    return (host.mouseButtons_.load() & 1) ? 1 : 0;
+                case RETRO_DEVICE_ID_MOUSE_RIGHT:
+                    return (host.mouseButtons_.load() & 2) ? 1 : 0;
+                case RETRO_DEVICE_ID_MOUSE_WHEELUP:
+                    return (host.mouseButtons_.load() & (1U << 4)) ? 1 : 0;
+                case RETRO_DEVICE_ID_MOUSE_WHEELDOWN:
+                    return (host.mouseButtons_.load() & (1U << 5)) ? 1 : 0;
+            }
         }
 
         switch (id) {
@@ -658,17 +745,17 @@ int16_t LibretroHost::inputStateCallback(unsigned port, unsigned device, unsigne
                 return (host.mouseButtons_.load() & 1) ? 1 : 0;
             case RETRO_DEVICE_ID_MOUSE_RIGHT:
                 return (host.mouseButtons_.load() & 2) ? 1 : 0;
+            case RETRO_DEVICE_ID_MOUSE_WHEELUP:
+                return (host.mouseButtons_.load() & (1U << 4)) ? 1 : 0;
+            case RETRO_DEVICE_ID_MOUSE_WHEELDOWN:
+                return (host.mouseButtons_.load() & (1U << 5)) ? 1 : 0;
         }
         return 0;
     }
 
     if (device == RETRO_DEVICE_KEYBOARD) {
         if (id < 512) {
-            int16_t v = host.keyState_[id].load() ? 1 : 0;
-            if (v && host.coreType_ == CoreType::AMIGA) {
-                LOGE("inputStateCallback: KEYBOARD id=%u -> 1", id);
-            }
-            return v;
+            return host.keyState_[id].load() ? 1 : 0;
         }
     }
 

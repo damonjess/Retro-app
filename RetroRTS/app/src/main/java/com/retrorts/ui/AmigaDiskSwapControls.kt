@@ -34,10 +34,19 @@ fun AmigaDiskSwapControls(
     diskSet: AmigaUtils.DiskSet,
     modifier: Modifier = Modifier,
 ) {
-    if (!diskSet.isMultiDisk) return
+    // If not a multi-disk set, we still want to show the overlay if the core says it has disks
+    val coreDiskCount = AmigaBridge.diskCount()
+    if (!diskSet.isMultiDisk && coreDiskCount <= 1) {
+        // Maybe show a hidden debug trigger or just return
+        // For now, let's log it
+        LaunchedEffect(Unit) {
+            android.util.Log.d("AmigaDiskSwap", "Hiding controls: diskSet.size=${diskSet.diskPaths.size}, coreCount=$coreDiskCount")
+        }
+        return
+    }
 
     var activeDiskNumber by remember(diskSet.diskPaths) {
-        mutableIntStateOf((AmigaBridge.activeDiskIndex() + 1).coerceIn(1, diskSet.diskPaths.size))
+        mutableIntStateOf((AmigaBridge.activeDiskIndex() + 1).coerceIn(1, if (coreDiskCount > 0) coreDiskCount else diskSet.diskPaths.size))
     }
     var diskControlReady by remember { mutableStateOf(AmigaBridge.isDiskControlAvailable()) }
     var statusText by remember { mutableStateOf("Preparing disk controls…") }
@@ -106,6 +115,12 @@ fun AmigaDiskSwapControls(
                 text = statusText,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            // Added debug info
+            Text(
+                text = "Debug: detected=${diskSet.diskPaths.size} core=$coreDiskCount",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error.copy(alpha = 0.5f)
             )
         }
     }

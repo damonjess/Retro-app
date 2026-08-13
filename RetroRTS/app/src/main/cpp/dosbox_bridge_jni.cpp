@@ -76,7 +76,8 @@ Java_com_retrorts_ui_DosboxBridge_notifyThermalLevelNative(JNIEnv*, jclass, jint
 
 extern "C" JNIEXPORT jfloatArray JNICALL
 Java_com_retrorts_ui_DosboxBridge_getPerfStatsNative(JNIEnv* env, jclass) {
-    float stats[2] = {0.0f, 0.0f};
+    auto& host = retrorts::LibretroHost::getInstance();
+    float stats[2] = { host.getFps(), host.getCpuUsage() };
     jfloatArray arr = env->NewFloatArray(2);
     env->SetFloatArrayRegion(arr, 0, 2, stats);
     return arr;

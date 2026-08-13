@@ -121,6 +121,12 @@ Java_com_retrorts_ui_AmigaBridge_updateInputNative(
 }
 
 extern "C" JNIEXPORT void JNICALL
+Java_com_retrorts_ui_AmigaBridge_updateAnalogNative(
+    JNIEnv*, jclass, jint port, jint index, jint id, jint value) {
+    retrorts::LibretroHost::getInstance().updateAnalog(port, index, id, static_cast<int16_t>(value));
+}
+
+extern "C" JNIEXPORT void JNICALL
 Java_com_retrorts_ui_AmigaBridge_updateMouseNative(
     JNIEnv*, jclass, jint buttonMask, jint dx, jint dy) {
     retrorts::LibretroHost::getInstance().updateMouse(

@@ -28,6 +28,11 @@ Java_com_retrorts_ui_NativeEmulatorBridge_updateInputNative(JNIEnv*, jclass, jin
 }
 
 extern "C" JNIEXPORT void JNICALL
+Java_com_retrorts_ui_NativeEmulatorBridge_updateAnalogNative(JNIEnv*, jclass, jint port, jint index, jint id, jint value) {
+    retrorts::LibretroHost::getInstance().updateAnalog(port, index, id, static_cast<int16_t>(value));
+}
+
+extern "C" JNIEXPORT void JNICALL
 Java_com_retrorts_ui_NativeEmulatorBridge_updateMouseNative(JNIEnv*, jclass, jint buttonMask, jint dx, jint dy) {
     retrorts::LibretroHost::getInstance().updateMouse(buttonMask, static_cast<int16_t>(dx), static_cast<int16_t>(dy));
 }

@@ -29,35 +29,42 @@ data class GameProfile(
         .put("skipKey", skipKey)
         .toString(2)
 
-    fun toDosboxConfig(gameDirectoryPath: String): String = """
-        [dosbox]
-        machine=$machine
-        memsize=$memMb
+    fun toDosboxConfig(gameFilePath: String): String {
+        val file = File(gameFilePath)
+        val parentDir = if (file.isDirectory) file.absolutePath else (file.parentFile?.absolutePath ?: "/")
+        val fileName = if (file.isDirectory) "" else file.name
 
-        [cpu]
-        core=dynamic
-        cycles=$cycles
+        return """
+            [dosbox]
+            machine=$machine
+            memsize=$memMb
 
-        [render]
-        frameskip=0
+            [cpu]
+            core=dynamic
+            cycles=$cycles
 
-        [mixer]
-        rate=$mixerRate
-        blocksize=1024
-        prebuffer=20
+            [render]
+            frameskip=0
 
-        [sdl]
-        priority=higher,normal
+            [mixer]
+            rate=$mixerRate
+            blocksize=1024
+            prebuffer=20
 
-        [autoexec]
-        @echo off
-        mount c "$gameDirectoryPath"
-        c:
-        if exist dune2000.exe dune2000.exe
-        if exist ra95.exe ra95.exe
-        if exist c&c.exe c&c.exe
-        if exist play.bat call play.bat
-    """.trimIndent()
+            [sdl]
+            priority=higher,normal
+
+            [autoexec]
+            @echo off
+            mount c "$parentDir"
+            c:
+            ${if (fileName.isNotEmpty()) (if (fileName.contains(" ")) "\"$fileName\"" else fileName) else ""}
+            if exist dune2000.exe dune2000.exe
+            if exist ra95.exe ra95.exe
+            if exist c&c.exe c&c.exe
+            if exist play.bat call play.bat
+        """.trimIndent()
+    }
 
     fun toAmigaConfig(gameDirectoryPath: String): String = """
         [general]

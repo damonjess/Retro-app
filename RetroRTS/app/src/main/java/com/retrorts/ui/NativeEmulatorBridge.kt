@@ -32,6 +32,10 @@ object NativeEmulatorBridge {
         if (nativeLoaded) runCatching { updateInputNative(port, buttonMask) }
     }
 
+    fun updateAnalog(port: Int, index: Int, id: Int, value: Int) {
+        if (nativeLoaded) runCatching { updateAnalogNative(port, index, id, value) }
+    }
+
     fun updateMouse(buttonMask: Int, dx: Int, dy: Int) {
         if (nativeLoaded) runCatching { updateMouseNative(buttonMask, dx, dy) }
     }
@@ -72,6 +76,7 @@ object NativeEmulatorBridge {
     @JvmStatic private external fun launchGameNative(console: String, romPath: String, cacheDir: String, saveDir: String): String
     @JvmStatic private external fun stopGameNative()
     @JvmStatic private external fun updateInputNative(port: Int, buttonMask: Int)
+    @JvmStatic private external fun updateAnalogNative(port: Int, index: Int, id: Int, value: Int)
     @JvmStatic private external fun updateMouseNative(buttonMask: Int, dx: Int, dy: Int)
     @JvmStatic private external fun setSurfaceNative(surface: android.view.Surface?)
     @JvmStatic private external fun setCoreDirNative(coreDir: String)

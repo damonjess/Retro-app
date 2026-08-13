@@ -105,6 +105,9 @@ const val RETRO_DEVICE_ID_JOYPAD_X = 9
 const val RETRO_DEVICE_ID_JOYPAD_L = 10
 const val RETRO_DEVICE_ID_JOYPAD_R = 11
 
+const val RETRO_DEVICE_ID_MOUSE_WHEELUP = 4
+const val RETRO_DEVICE_ID_MOUSE_WHEELDOWN = 5
+
 const val RETROK_ESCAPE = 27
 
 data class GameEntry(
@@ -475,7 +478,7 @@ private fun RootApp(
     when (screen) {
         AppScreen.SPLASH -> SplashScreen()
         AppScreen.NEEDS_PERMISSION -> PermissionScreen(onRequestStorage)
-        AppScreen.GAME -> activeGame?.let { DosboxPlayScreen(it) { 
+        AppScreen.GAME -> activeGame?.let { DosboxPlayScreen(it, settings) { 
             DosboxBridge.stopDosbox()
             NativeEmulatorBridge.stopGame()
             onAbandonAudioFocus()
@@ -1294,7 +1297,7 @@ private fun StoragePath(label: String, path: String) {
 
 
 @Composable
-private fun DosboxPlayScreen(game: GameEntry, onExit: () -> Unit) {
+private fun DosboxPlayScreen(game: GameEntry, settings: SettingsState, onExit: () -> Unit) {
     var showExitDialog by remember { mutableStateOf(false) }
     var showKeyboardDialog by remember { mutableStateOf(false) }
     var keyboardText by remember { mutableStateOf("") }
@@ -1302,6 +1305,8 @@ private fun DosboxPlayScreen(game: GameEntry, onExit: () -> Unit) {
     var numDisks by remember { mutableStateOf(0) }
     var currentDisk by remember { mutableStateOf(0) }
     var currentMask by remember { mutableStateOf(0) }
+    val mouseButtonsState = remember { mutableStateOf(0) }
+    var currentMouseButtons by mouseButtonsState
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     
@@ -1311,12 +1316,14 @@ private fun DosboxPlayScreen(game: GameEntry, onExit: () -> Unit) {
     var fps by remember { mutableStateOf(0f) }
     var cpuPct by remember { mutableStateOf(0f) }
     
-    // Update input whenever currentMask changes
+    // Update input whenever mask or mouse buttons change
     LaunchedEffect(currentMask) {
-        // Send input to BOTH port 0 and port 1.
-        // For Amiga, Port 1 is usually the Joystick (Port 2 in Amiga hardware).
         NativeEmulatorBridge.updateInput(0, currentMask)
         NativeEmulatorBridge.updateInput(1, currentMask)
+    }
+
+    LaunchedEffect(currentMouseButtons) {
+        NativeEmulatorBridge.updateMouse(currentMouseButtons, 0, 0)
     }
 
     // Auto-detect high refresh rate
@@ -1328,11 +1335,7 @@ private fun DosboxPlayScreen(game: GameEntry, onExit: () -> Unit) {
         }
         
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val maxRefresh = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            context.display?.supportedModes?.maxByOrNull { it.refreshRate }?.refreshRate ?: 60f
-        } else {
-            60f
-        }
+            val maxRefresh = context.display?.supportedModes?.maxByOrNull { it.refreshRate }?.refreshRate ?: 60f
             if (maxRefresh > 60f) {
                 DosboxBridge.setFrameCap(maxRefresh.toInt())
             }
@@ -1391,31 +1394,32 @@ private fun DosboxPlayScreen(game: GameEntry, onExit: () -> Unit) {
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
                 SurfaceView(ctx).apply {
-                    if (game.consoleType == ConsoleType.AMIGA) {
-                        var lastX = 0f
-                        var lastY = 0f
-                        setOnTouchListener { _, event ->
-                            when (event.actionMasked) {
-                                MotionEvent.ACTION_DOWN -> {
-                                    lastX = event.x
-                                    lastY = event.y
-                                    NativeEmulatorBridge.updateMouse(1, 0, 0)
-                                }
-                                MotionEvent.ACTION_MOVE -> {
-                                    val dx = (event.x - lastX).toInt()
-                                    val dy = (event.y - lastY).toInt()
-                                    lastX = event.x
-                                    lastY = event.y
-                                    if (dx != 0 || dy != 0) {
-                                        NativeEmulatorBridge.updateMouse(1, dx, dy)
-                                    }
-                                }
-                                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                                    NativeEmulatorBridge.updateMouse(0, 0, 0)
+                    var lastX = 0f
+                    var lastY = 0f
+                    setOnTouchListener { _, event ->
+                        when (event.actionMasked) {
+                            MotionEvent.ACTION_DOWN -> {
+                                lastX = event.x
+                                lastY = event.y
+                                NativeEmulatorBridge.updateMouse(mouseButtonsState.value, 0, 0)
+                            }
+                            MotionEvent.ACTION_MOVE -> {
+                                val dx = event.x - lastX
+                                val dy = event.y - lastY
+                                val idx = dx.toInt()
+                                val idy = dy.toInt()
+                                if (idx != 0 || idy != 0) {
+                                    // Scale movement for better sensitivity on high-res screens
+                                    NativeEmulatorBridge.updateMouse(mouseButtonsState.value, idx * 2, idy * 2)
+                                    lastX += idx
+                                    lastY += idy
                                 }
                             }
-                            true
+                            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                                NativeEmulatorBridge.updateMouse(mouseButtonsState.value, 0, 0)
+                            }
                         }
+                        true
                     }
 
                     holder.addCallback(object : SurfaceHolder.Callback {
@@ -1433,88 +1437,93 @@ private fun DosboxPlayScreen(game: GameEntry, onExit: () -> Unit) {
             }
         )
 
-        // ── HUD overlay (Top) ─────────────────────────────────────────
-        Row(
-            Modifier
-                .align(Alignment.TopCenter)
-                .statusBarsPadding()
-                .fillMaxWidth()
-                .padding(8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.Top
-        ) {
-            Column {
-                Text(
-                    "${"%.0f".format(fps)} fps  •  ${"%.0f".format(cpuPct)}% cpu",
-                    color = Color(0xAAD8C77A),
-                    style = MaterialTheme.typography.labelSmall
+            // HUD row (Top)
+            Row(
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding()
+                    .fillMaxWidth()
+                    .padding(8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top
+            ) {
+                Column {
+                    Text(
+                        "${"%.0f".format(fps)} fps  •  ${"%.0f".format(cpuPct)}% cpu",
+                        color = Color(0xAAD8C77A),
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+                
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Utility buttons
+                    IconButton(
+                        onClick = {
+                            // Send keyboard skip key
+                            NativeEmulatorBridge.sendKeyString(profile.skipKey)
+                            // Also pulse joystick fire for compatibility
+                            scope.launch {
+                                NativeEmulatorBridge.updateInput(0, currentMask or (1 shl RETRO_DEVICE_ID_JOYPAD_B))
+                                NativeEmulatorBridge.updateInput(1, currentMask or (1 shl RETRO_DEVICE_ID_JOYPAD_B))
+                                delay(100)
+                                NativeEmulatorBridge.updateInput(0, currentMask)
+                                NativeEmulatorBridge.updateInput(1, currentMask)
+                            }
+                        },
+                        modifier = Modifier.background(Color(0x44D8C77A), CircleShape).size(40.dp)
+                    ) {
+                        Icon(Icons.Filled.SkipNext, contentDescription = "Skip", tint = Color.Black)
+                    }
+
+                    IconButton(
+                        onClick = { NativeEmulatorBridge.updateInput(0, 1 shl 10) }, // L
+                        modifier = Modifier.background(Color(0x44FFFFFF), CircleShape).size(40.dp)
+                    ) {
+                        Text("L", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                    
+                    IconButton(
+                        onClick = { NativeEmulatorBridge.updateInput(0, 1 shl 11) }, // R
+                        modifier = Modifier.background(Color(0x44FFFFFF), CircleShape).size(40.dp)
+                    ) {
+                        Text("R", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+
+                    IconButton(
+                        onClick = { NativeEmulatorBridge.sendKeyCode(RETROK_ESCAPE) },
+                        modifier = Modifier.background(Color(0x44FFFFFF), CircleShape).size(40.dp)
+                    ) {
+                        Text("ESC", color = Color.White, fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.labelSmall)
+                    }
+
+                    IconButton(
+                        onClick = { showKeyboardDialog = true },
+                        modifier = Modifier.background(Color(0x44FFFFFF), CircleShape).size(40.dp)
+                    ) {
+                        Icon(Icons.Filled.Keyboard, contentDescription = "Keyboard", tint = Color.White)
+                    }
+                    
+                    IconButton(
+                        onClick = { showExitDialog = true },
+                        modifier = Modifier.background(Color(0x448B2020), CircleShape).size(40.dp)
+                    ) {
+                        Text("✕", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+
+            // Amiga Disk Swap Overlay (Below HUD row)
+            if (game.consoleType == ConsoleType.AMIGA) {
+                val diskSet = remember(game.filePath) { AmigaUtils.diskSetFor(game.filePath) }
+                AmigaDiskSwapControls(
+                    diskSet = diskSet,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 100.dp)
+                        .padding(horizontal = 16.dp)
                 )
-                if (game.consoleType == ConsoleType.AMIGA) {
-                    val diskSet = remember(game.filePath) { AmigaUtils.diskSetFor(game.filePath) }
-                    AmigaDiskSwapControls(diskSet)
-                } else if (statusMsg.isNotBlank()) {
-                    Text(statusMsg, color = Color(0xFFD8C77A),
-                        style = MaterialTheme.typography.labelSmall)
-                }
             }
-            
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                // Utility buttons moved to top to clear the bottom for controls
-                IconButton(
-                    onClick = {
-                        // Send keyboard skip key
-                        NativeEmulatorBridge.sendKeyString(profile.skipKey)
-                        // Also pulse joystick fire for compatibility
-                        scope.launch {
-                            NativeEmulatorBridge.updateInput(0, currentMask or (1 shl RETRO_DEVICE_ID_JOYPAD_B))
-                            NativeEmulatorBridge.updateInput(1, currentMask or (1 shl RETRO_DEVICE_ID_JOYPAD_B))
-                            delay(100)
-                            NativeEmulatorBridge.updateInput(0, currentMask)
-                            NativeEmulatorBridge.updateInput(1, currentMask)
-                        }
-                    },
-                    modifier = Modifier.background(Color(0x44D8C77A), CircleShape).size(40.dp)
-                ) {
-                    Icon(Icons.Filled.SkipNext, contentDescription = "Skip", tint = Color.Black)
-                }
-
-                IconButton(
-                    onClick = { NativeEmulatorBridge.updateInput(0, 1 shl 10) }, // L
-                    modifier = Modifier.background(Color(0x44FFFFFF), CircleShape).size(40.dp)
-                ) {
-                    Text("L", color = Color.White, fontWeight = FontWeight.Bold)
-                }
-                
-                IconButton(
-                    onClick = { NativeEmulatorBridge.updateInput(0, 1 shl 11) }, // R
-                    modifier = Modifier.background(Color(0x44FFFFFF), CircleShape).size(40.dp)
-                ) {
-                    Text("R", color = Color.White, fontWeight = FontWeight.Bold)
-                }
-
-                IconButton(
-                    onClick = { NativeEmulatorBridge.sendKeyCode(RETROK_ESCAPE) },
-                    modifier = Modifier.background(Color(0x44FFFFFF), CircleShape).size(40.dp)
-                ) {
-                    Text("ESC", color = Color.White, fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.labelSmall)
-                }
-
-                IconButton(
-                    onClick = { showKeyboardDialog = true },
-                    modifier = Modifier.background(Color(0x44FFFFFF), CircleShape).size(40.dp)
-                ) {
-                    Icon(Icons.Filled.Keyboard, contentDescription = "Keyboard", tint = Color.White)
-                }
-                
-                IconButton(
-                    onClick = { showExitDialog = true },
-                    modifier = Modifier.background(Color(0x448B2020), CircleShape).size(40.dp)
-                ) {
-                    Text("✕", color = Color.White, fontWeight = FontWeight.Bold)
-                }
-            }
-        }
 
         // ── Virtual Gamepad (Bottom) ──────────────────────────────────
         Box(
@@ -1524,15 +1533,87 @@ private fun DosboxPlayScreen(game: GameEntry, onExit: () -> Unit) {
                 .navigationBarsPadding()
                 .padding(bottom = 16.dp)
         ) {
-            VirtualGamepad { currentMask = it }
+            VirtualGamepad(
+                consoleType = game.consoleType,
+                onMaskChange = { currentMask = it },
+                onMouseClick = { button, down ->
+                    currentMouseButtons = if (down) {
+                        currentMouseButtons or button
+                    } else {
+                        currentMouseButtons and button.inv()
+                    }
+                },
+                onAnalogMove = { x, y ->
+                    // Analog X/Y range -32768 to 32767
+                    val sensitivity = settings.sensitivity
+                    val valX = (x * 32767f * sensitivity).toInt().coerceIn(-32768, 32767)
+                    val valY = (y * 32767f * sensitivity).toInt().coerceIn(-32768, 32767)
+                    NativeEmulatorBridge.updateAnalog(0, 0, 0, valX) // port 0, Left stick, X
+                    NativeEmulatorBridge.updateAnalog(0, 0, 1, valY) // port 0, Left stick, Y
+                }
+            )
         }
+    }
+}
+
+@Composable
+private fun AnalogStick(
+    modifier: Modifier = Modifier,
+    onMove: (x: Float, y: Float) -> Unit
+) {
+    var stickOffset by remember { mutableStateOf(Offset.Zero) }
+    val maxRadius = 100f // Travel distance in pixels
+
+    Box(
+        modifier = modifier
+            .size(140.dp)
+            .background(Color(0x33FFFFFF), CircleShape)
+            .border(2.dp, Color(0x66FFFFFF), CircleShape)
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        awaitFirstDown()
+                        do {
+                            val event = awaitPointerEvent()
+                            val pos = event.changes.first().position
+                            val center = Offset(size.width / 2f, size.height / 2f)
+                            val rawOffset = pos - center
+                            
+                            val distance = rawOffset.getDistance()
+                            stickOffset = if (distance > maxRadius) {
+                                rawOffset * (maxRadius / distance)
+                            } else {
+                                rawOffset
+                            }
+                            
+                            onMove(stickOffset.x / maxRadius, stickOffset.y / maxRadius)
+                            event.changes.forEach { it.consume() }
+                        } while (event.changes.any { it.pressed })
+                        
+                        stickOffset = Offset.Zero
+                        onMove(0f, 0f)
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            Modifier
+                .offset { IntOffset(stickOffset.x.toInt(), stickOffset.y.toInt()) }
+                .size(60.dp)
+                .background(Color(0xAAFFFFFF), CircleShape)
+                .border(2.dp, Color.White, CircleShape)
+        )
     }
 }
 
 @Composable
 private fun VirtualGamepad(
     modifier: Modifier = Modifier,
-    onMaskChange: (Int) -> Unit
+    consoleType: ConsoleType,
+    onMaskChange: (Int) -> Unit,
+    onMouseClick: (Int, Boolean) -> Unit,
+    onAnalogMove: (x: Float, y: Float) -> Unit
 ) {
     var mask by remember { mutableStateOf(0) }
 
@@ -1554,24 +1635,38 @@ private fun VirtualGamepad(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // ── D-Pad ─────────────────────────────────────────────────────
-        Box(Modifier.size(160.dp)) {
-            // Background circle
-            Box(Modifier.fillMaxSize().background(Color(0x33FFFFFF), CircleShape).border(2.dp, Color(0x66FFFFFF), CircleShape))
-            
-            // Buttons in a grid-like cross
-            GamepadButton(Modifier.align(Alignment.TopCenter), "▲") { updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_UP), it) }
-            GamepadButton(Modifier.align(Alignment.BottomCenter), "▼") { updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_DOWN), it) }
-            GamepadButton(Modifier.align(Alignment.CenterStart), "◀") { updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_LEFT), it) }
-            GamepadButton(Modifier.align(Alignment.CenterEnd), "▶") { updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_RIGHT), it) }
+        // ── Left Side: D-Pad or Analog Stick ───────────────────────────
+        if (consoleType == ConsoleType.AMIGA) {
+            AnalogStick(onMove = onAnalogMove)
+        } else {
+            Box(Modifier.size(160.dp)) {
+                Box(Modifier.fillMaxSize().background(Color(0x33FFFFFF), CircleShape).border(2.dp, Color(0x66FFFFFF), CircleShape))
+                GamepadButton(Modifier.align(Alignment.TopCenter), "▲") { updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_DOWN), it) }
+                GamepadButton(Modifier.align(Alignment.BottomCenter), "▼") { updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_UP), it) }
+                GamepadButton(Modifier.align(Alignment.CenterStart), "◀") { updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_LEFT), it) }
+                GamepadButton(Modifier.align(Alignment.CenterEnd), "▶") { updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_RIGHT), it) }
+            }
         }
 
-        // ── Action Buttons ────────────────────────────────────────────
+        // ── Right Side: Action Buttons ────────────────────────────────
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            // Amiga Fire 1 is usually B or A in Libretro. We map to both for compatibility.
-            GamepadButton(Modifier.size(80.dp), "FIRE", Color(0xFF8B2020)) { updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_B, RETRO_DEVICE_ID_JOYPAD_A), it) }
-            GamepadButton(Modifier.size(80.dp), "2", Color(0xFF3A3A6A)) { updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_Y, RETRO_DEVICE_ID_JOYPAD_X), it) }
-            // Added START button for skipping intros (mapped to Space in Amiga core)
+            // FIRE -> Left Mouse Click (1)
+            GamepadButton(Modifier.size(80.dp), "FIRE", Color(0xFF8B2020)) { 
+                onMouseClick(1, it)
+            }
+            // 2 -> Right Mouse Click (2)
+            GamepadButton(Modifier.size(80.dp), "2", Color(0xFF3A3A6A)) { 
+                onMouseClick(2, it)
+            }
+            
+            // For Amiga, add a D-Pad overlay for Wheel / Keyboard Arrows
+            if (consoleType == ConsoleType.AMIGA) {
+                Box(Modifier.size(100.dp)) {
+                     GamepadButton(Modifier.align(Alignment.TopCenter).size(40.dp), "W▲") { onMouseClick(1 shl RETRO_DEVICE_ID_MOUSE_WHEELUP, it) }
+                     GamepadButton(Modifier.align(Alignment.BottomCenter).size(40.dp), "W▼") { onMouseClick(1 shl RETRO_DEVICE_ID_MOUSE_WHEELDOWN, it) }
+                }
+            }
+
             GamepadButton(Modifier.size(60.dp), "START", Color(0xFF444444)) { updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_START), it) }
         }
     }

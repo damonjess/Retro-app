@@ -24,15 +24,32 @@ object AmigaUtils {
      * one-item set.
      */
     fun diskSetFor(filePath: String): DiskSet {
+        android.util.Log.d("AmigaUtils", "diskSetFor: $filePath")
         val selectedFile = File(filePath)
         val selectedMatch = numberedDiskPattern.matchEntire(selectedFile.nameWithoutExtension)
-            ?: return DiskSet(listOf(filePath), selectedDiskNumber = 1)
+            ?: run {
+                android.util.Log.d("AmigaUtils", "No match for pattern: ${selectedFile.nameWithoutExtension}")
+                return DiskSet(listOf(filePath), selectedDiskNumber = 1)
+            }
+        
         val parent = selectedFile.parentFile
-            ?: return DiskSet(listOf(filePath), selectedDiskNumber = 1)
+            ?: run {
+                android.util.Log.d("AmigaUtils", "No parent for: $filePath")
+                return DiskSet(listOf(filePath), selectedDiskNumber = 1)
+            }
+        
         val gameStem = selectedMatch.groupValues[1].trim().lowercase()
         val extension = selectedFile.extension.lowercase()
+        android.util.Log.d("AmigaUtils", "Detected gameStem: $gameStem, extension: $extension")
 
-        val candidates = parent.listFiles()
+        val files = parent.listFiles()
+        if (files == null) {
+            android.util.Log.d("AmigaUtils", "listFiles returned null for: ${parent.absolutePath}")
+        } else {
+            android.util.Log.d("AmigaUtils", "Found ${files.size} files in parent directory")
+        }
+
+        val candidates = files
             ?.asSequence()
             ?.filter { it.isFile && it.extension.lowercase() == extension }
             ?.mapNotNull { file ->
@@ -41,15 +58,22 @@ object AmigaUtils {
                 val stem = match.groupValues[1].trim().lowercase()
                 if (stem != gameStem) return@mapNotNull null
                 val diskNumber = match.groupValues[2].toIntOrNull() ?: return@mapNotNull null
+                android.util.Log.d("AmigaUtils", "Candidate disk: $diskNumber -> ${file.name}")
                 diskNumber to file.absolutePath
             }
             ?.sortedBy { it.first }
             ?.toList()
             .orEmpty()
 
-        if (candidates.isEmpty()) return DiskSet(listOf(filePath), selectedDiskNumber = 1)
+        if (candidates.isEmpty()) {
+            android.util.Log.d("AmigaUtils", "No candidates found, returning single disk set")
+            return DiskSet(listOf(filePath), selectedDiskNumber = 1)
+        }
+        
         val selectedNumber = selectedMatch.groupValues[2].toIntOrNull() ?: 1
         val selectedPosition = candidates.indexOfFirst { it.first == selectedNumber }
+        android.util.Log.d("AmigaUtils", "Found ${candidates.size} disks. Selected position: $selectedPosition")
+        
         return DiskSet(
             diskPaths = candidates.map { it.second },
             selectedDiskNumber = if (selectedPosition >= 0) selectedPosition + 1 else 1,

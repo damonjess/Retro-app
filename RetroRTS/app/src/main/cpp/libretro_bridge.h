@@ -4,6 +4,7 @@
 #include <atomic>
 #include <mutex>
 #include <vector>
+#include <chrono>
 #include <android/native_window.h>
 #include <aaudio/AAudio.h>
 #include "libretro.h"
@@ -24,6 +25,7 @@ public:
     void sendKeyString(const std::string& text);
     void sendKeyCode(unsigned keycode);
     void updateJoypad(int port, uint16_t state);
+    void updateAnalog(int port, int index, int id, int16_t value);
     void updateMouse(int buttonMask, int16_t dx, int16_t dy);
 
     // Disk-control support is registered by a core through envCallback().
@@ -32,6 +34,9 @@ public:
     unsigned diskCount();
     unsigned activeDiskIndex();
     bool supportsDiskControl();
+
+    float getFps() const { return currentFps_.load(); }
+    float getCpuUsage() const { return currentCpu_.load(); }
 
     void setWindow(ANativeWindow* window);
 
@@ -55,6 +60,7 @@ private:
     ANativeWindow* window_ = nullptr;
     std::atomic<bool> running_{false};
     std::atomic<uint16_t> padState_[2]{0, 0};
+    std::atomic<int16_t> analogState_[2][2][2]; // [port][index][id]
     std::atomic<bool> keyState_[512]{false}; // RETROK_LAST is usually around 320
     std::recursive_mutex coreMutex_;
 
@@ -67,6 +73,7 @@ private:
     std::atomic<int16_t> mouseX_{0};
     std::atomic<int16_t> mouseY_{0};
     CoreType coreType_ = CoreType::NONE;
+    enum retro_pixel_format pixelFormat_ = RETRO_PIXEL_FORMAT_RGB565;
     retro_keyboard_event_t keyboard_cb_ = nullptr;
     retro_disk_control_callback diskControl_{};
     bool diskControlAvailable_ = false;
@@ -82,6 +89,13 @@ private:
     AAudioStream* audioStream_ = nullptr;
     bool initAudio(double sampleRate);
     void deinitAudio();
+
+    // Stats
+    std::atomic<float> currentFps_{0.0f};
+    std::atomic<float> currentCpu_{0.0f};
+    std::atomic<int> frameCount_{0};
+    std::atomic<long long> totalRunTimeUs_{0};
+    std::chrono::steady_clock::time_point lastStatsTime_;
 
     void (*retro_init_fn)() = nullptr;
     void (*retro_deinit_fn)() = nullptr;
