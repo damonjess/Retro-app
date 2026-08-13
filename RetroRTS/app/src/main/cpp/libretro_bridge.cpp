@@ -230,10 +230,6 @@ void LibretroHost::sendKeyString(const std::string& text) {
 }
 
 void LibretroHost::updateJoypad(int port, uint16_t state) {
-    if (state != 0) {
-        LOGE("updateJoypad (entry): port=%d, state=0x%04X, core=%d", port, state, (int)coreType_);
-    }
-
     if (port >= 0 && port < 2) {
         padState_[port].store(state);
     }
@@ -265,8 +261,19 @@ void LibretroHost::updateJoypad(int port, uint16_t state) {
         }
 
         // ---- Keyboard mirror: Space + Enter ----
-        keyState_[RETROK_SPACE].store(pressed);
-        keyState_[RETROK_RETURN].store(pressed);
+        // CRITICAL: We must push to keyEventQueue_ so that keyboard_cb_ is called.
+        // PUAE uses the callback for keyboard input, not just input_state_cb.
+        bool oldKeyState = keyState_[RETROK_SPACE].load();
+        if (pressed != oldKeyState) {
+            keyState_[RETROK_SPACE].store(pressed);
+            keyState_[RETROK_RETURN].store(pressed);
+
+            std::lock_guard<std::mutex> qlock(queueMutex_);
+            keyEventQueue_.push_back({pressed, (unsigned)RETROK_SPACE, (uint32_t)' '});
+            keyEventQueue_.push_back({pressed, (unsigned)RETROK_RETURN, (uint32_t)'\r'});
+
+            LOGE("Amiga Keyboard Mirror: %s (Space/Return)", pressed ? "DOWN" : "UP");
+        }
 
         if (anyBtn != 0) {
             LOGE("updateJoypad (Amiga): anyBtn=0x%04X pressed=%d mouseBtns=%d",
