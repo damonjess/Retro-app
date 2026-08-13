@@ -77,6 +77,7 @@ import androidx.lifecycle.lifecycleScope
 import com.retrorts.ui.AmigaBridge
 import com.retrorts.ui.AmigaDiskSwapControls
 import com.retrorts.ui.AmigaUtils
+import com.retrorts.ui.AmigaVirtualController
 import com.retrorts.ui.ConsoleType
 import com.retrorts.ui.DosboxBridge
 import com.retrorts.ui.GameProfile
@@ -1312,6 +1313,16 @@ private fun DosboxPlayScreen(game: GameEntry, settings: SettingsState, onExit: (
     
     val profile = remember(game.name) { GameProfileStore.loadByGameName(game.name) }
 
+    fun updateBits(bits: List<Int>, down: Boolean) {
+        var newMask = currentMask
+        bits.forEach { bit ->
+            newMask = if (down) newMask or (1 shl bit) else newMask and (1 shl bit).inv()
+        }
+        if (newMask != currentMask) {
+            currentMask = newMask
+        }
+    }
+
     // Live perf stats — poll every second
     var fps by remember { mutableStateOf(0f) }
     var cpuPct by remember { mutableStateOf(0f) }
@@ -1475,27 +1486,17 @@ private fun DosboxPlayScreen(game: GameEntry, settings: SettingsState, onExit: (
                         Icon(Icons.Filled.SkipNext, contentDescription = "Skip", tint = Color.Black)
                     }
 
-                    IconButton(
-                        onClick = { NativeEmulatorBridge.updateInput(0, 1 shl 10) }, // L
-                        modifier = Modifier.background(Color(0x44FFFFFF), CircleShape).size(40.dp)
-                    ) {
-                        Text("L", color = Color.White, fontWeight = FontWeight.Bold)
-                    }
+                    GamepadButton(
+                        modifier = Modifier.size(40.dp),
+                        label = "L",
+                        color = Color(0x44FFFFFF)
+                    ) { updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_B), it) }
                     
-                    IconButton(
-                        onClick = { NativeEmulatorBridge.updateInput(0, 1 shl 11) }, // R
-                        modifier = Modifier.background(Color(0x44FFFFFF), CircleShape).size(40.dp)
-                    ) {
-                        Text("R", color = Color.White, fontWeight = FontWeight.Bold)
-                    }
-
-                    IconButton(
-                        onClick = { NativeEmulatorBridge.sendKeyCode(RETROK_ESCAPE) },
-                        modifier = Modifier.background(Color(0x44FFFFFF), CircleShape).size(40.dp)
-                    ) {
-                        Text("ESC", color = Color.White, fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.labelSmall)
-                    }
+                    GamepadButton(
+                        modifier = Modifier.size(40.dp),
+                        label = "R",
+                        color = Color(0x44FFFFFF)
+                    ) { updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_R), it) }
 
                     IconButton(
                         onClick = { showKeyboardDialog = true },
@@ -1533,25 +1534,37 @@ private fun DosboxPlayScreen(game: GameEntry, settings: SettingsState, onExit: (
                 .navigationBarsPadding()
                 .padding(bottom = 16.dp)
         ) {
-            VirtualGamepad(
-                consoleType = game.consoleType,
-                onMaskChange = { currentMask = it },
-                onMouseClick = { button, down ->
-                    currentMouseButtons = if (down) {
-                        currentMouseButtons or button
-                    } else {
-                        currentMouseButtons and button.inv()
+            if (game.consoleType == ConsoleType.AMIGA) {
+                AmigaVirtualController(
+                    onMouseClick = { button, down ->
+                        currentMouseButtons = if (down) {
+                            currentMouseButtons or button
+                        } else {
+                            currentMouseButtons and button.inv()
+                        }
                     }
-                },
-                onAnalogMove = { x, y ->
-                    // Analog X/Y range -32768 to 32767
-                    val sensitivity = settings.sensitivity
-                    val valX = (x * 32767f * sensitivity).toInt().coerceIn(-32768, 32767)
-                    val valY = (y * 32767f * sensitivity).toInt().coerceIn(-32768, 32767)
-                    NativeEmulatorBridge.updateAnalog(0, 0, 0, valX) // port 0, Left stick, X
-                    NativeEmulatorBridge.updateAnalog(0, 0, 1, valY) // port 0, Left stick, Y
-                }
-            )
+                )
+            } else {
+                VirtualGamepad(
+                    consoleType = game.consoleType,
+                    onMaskChange = { currentMask = it },
+                    onMouseClick = { button, down ->
+                        currentMouseButtons = if (down) {
+                            currentMouseButtons or button
+                        } else {
+                            currentMouseButtons and button.inv()
+                        }
+                    },
+                    onAnalogMove = { x, y ->
+                        // Analog X/Y range -32768 to 32767
+                        val sensitivity = settings.sensitivity
+                        val valX = (x * 32767f * sensitivity).toInt().coerceIn(-32768, 32767)
+                        val valY = (y * 32767f * sensitivity).toInt().coerceIn(-32768, 32767)
+                        NativeEmulatorBridge.updateAnalog(0, 0, 0, valX) // port 0, Left stick, X
+                        NativeEmulatorBridge.updateAnalog(0, 0, 1, valY) // port 0, Left stick, Y
+                    }
+                )
+            }
         }
     }
 }

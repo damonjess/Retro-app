@@ -714,21 +714,36 @@ int16_t LibretroHost::inputStateCallback(unsigned port, unsigned device, unsigne
 
     if (device == RETRO_DEVICE_MOUSE) {
         if (host.coreType_ == CoreType::AMIGA && port == 0) {
+            uint16_t pad = host.padState_[0].load();
             switch (id) {
                 case RETRO_DEVICE_ID_MOUSE_X: {
                     int16_t stickX = host.analogState_[0][0][0].load();
-                    int16_t stickDelta = (stickX != 0) ? (stickX / 2500) : 0;
-                    return stickDelta + host.mouseX_.exchange(0);
+                    int16_t stickDelta = (stickX != 0) ? (stickX / 900) : 0;
+                    int16_t dpadDelta = 0;
+                    if (pad & (1U << 7)) dpadDelta += 8; // Right
+                    if (pad & (1U << 6)) dpadDelta -= 8; // Left
+                    return stickDelta + dpadDelta + host.mouseX_.exchange(0);
                 }
                 case RETRO_DEVICE_ID_MOUSE_Y: {
                     int16_t stickY = host.analogState_[0][0][1].load();
-                    int16_t stickDelta = (stickY != 0) ? (stickY / 2500) : 0;
-                    return stickDelta + host.mouseY_.exchange(0);
+                    int16_t stickDelta = (stickY != 0) ? (stickY / 900) : 0;
+                    int16_t dpadDelta = 0;
+                    if (pad & (1U << 5)) dpadDelta += 8; // Down
+                    if (pad & (1U << 4)) dpadDelta -= 8; // Up
+                    return stickDelta + dpadDelta + host.mouseY_.exchange(0);
                 }
-                case RETRO_DEVICE_ID_MOUSE_LEFT:
-                    return (host.mouseButtons_.load() & 1) ? 1 : 0;
-                case RETRO_DEVICE_ID_MOUSE_RIGHT:
-                    return (host.mouseButtons_.load() & 2) ? 1 : 0;
+                case RETRO_DEVICE_ID_MOUSE_LEFT: {
+                    bool mouseLeft = (host.mouseButtons_.load() & 1);
+                    // Map Joypad B, A, X, Y to mouse left for convenience in mouse games
+                    bool padLeft = (pad & (1U << 0)) || (pad & (1U << 8)) || (pad & (1U << 1)) || (pad & (1U << 9));
+                    return (mouseLeft || padLeft) ? 1 : 0;
+                }
+                case RETRO_DEVICE_ID_MOUSE_RIGHT: {
+                    bool mouseRight = (host.mouseButtons_.load() & 2);
+                    // Map Joypad L, R to mouse right
+                    bool padRight = (pad & (1U << 10)) || (pad & (1U << 11));
+                    return (mouseRight || padRight) ? 1 : 0;
+                }
                 case RETRO_DEVICE_ID_MOUSE_WHEELUP:
                     return (host.mouseButtons_.load() & (1U << 4)) ? 1 : 0;
                 case RETRO_DEVICE_ID_MOUSE_WHEELDOWN:
