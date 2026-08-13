@@ -20,17 +20,45 @@ object AmigaBridge {
     data class LaunchResult(val started: Boolean, val message: String)
 
     /**
-     * Start the Amiga emulator with a game disk image.
-     * 
-     * @param gamePath Full path to the Amiga game disk image (.adf, .hdf, .dms)
-     * @return true if emulator started successfully
+     * Start the Amiga emulator from a selected disk. When the selected file is
+     * part of a numbered disk set, all sibling disks are loaded in numbered
+     * order so the Libretro core can service later swap requests.
      */
-    fun startAmiga(gamePath: String): Boolean {
-        if (!nativeLoaded) return false
+    fun startAmiga(gamePath: String): Boolean = startAmiga(AmigaUtils.diskSetFor(gamePath).diskPaths)
+
+    /**
+     * Start the Amiga emulator with an explicit, ordered disk set. The first
+     * path must be the boot disk; additional paths become an M3U disk playlist
+     * in the native layer.
+     */
+    fun startAmiga(diskPaths: List<String>): Boolean {
+        if (!nativeLoaded || diskPaths.isEmpty()) return false
         return runCatching {
-            startAmigaNative(gamePath)
+            startAmigaNative(diskPaths.toTypedArray())
         }.getOrDefault(false)
     }
+
+    /**
+     * Select a one-based disk number using Libretro's eject-select-insert
+     * protocol. Returns false when the running core has not registered disk
+     * controls or the requested disk is outside the loaded playlist.
+     */
+    fun swapToDisk(diskNumber: Int): Boolean {
+        if (!nativeLoaded || diskNumber <= 0) return false
+        return runCatching { swapDiskNative(diskNumber - 1) }.getOrDefault(false)
+    }
+
+    fun diskCount(): Int = if (nativeLoaded) {
+        runCatching { getDiskCountNative() }.getOrDefault(0)
+    } else 0
+
+    /** Zero-based; callers that display a number should add one. */
+    fun activeDiskIndex(): Int = if (nativeLoaded) {
+        runCatching { getActiveDiskIndexNative() }.getOrDefault(0)
+    } else 0
+
+    fun isDiskControlAvailable(): Boolean = nativeLoaded &&
+        runCatching { isDiskControlAvailableNative() }.getOrDefault(false)
 
     /**
      * Stop the Amiga emulator.
@@ -71,7 +99,11 @@ object AmigaBridge {
     }
 
     // JNI function declarations
-    @JvmStatic private external fun startAmigaNative(gamePath: String): Boolean
+    @JvmStatic private external fun startAmigaNative(diskPaths: Array<String>): Boolean
+    @JvmStatic private external fun swapDiskNative(diskIndex: Int): Boolean
+    @JvmStatic private external fun getDiskCountNative(): Int
+    @JvmStatic private external fun getActiveDiskIndexNative(): Int
+    @JvmStatic private external fun isDiskControlAvailableNative(): Boolean
     @JvmStatic private external fun stopAmigaNative()
     @JvmStatic private external fun isRunningNative(): Boolean
     @JvmStatic private external fun updateInputNative(port: Int, buttonMask: Int)

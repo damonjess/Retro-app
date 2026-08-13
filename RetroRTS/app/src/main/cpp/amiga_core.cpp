@@ -64,6 +64,7 @@ std::string selectKickstartRom(const std::string& gamePath) {
 // Validate that the game file is a valid Amiga disk image
 bool isValidAmigaDiskImage(const std::string& path) {
     std::string e = ext(path);
+    if (e == ".m3u") return true;   // playlist — real disks validated by the core itself
     if (e != ".adf" && e != ".hdf" && e != ".dms") {
         return false;
     }

@@ -22,8 +22,16 @@ public:
     void stop();
 
     void sendKeyString(const std::string& text);
+    void sendKeyCode(unsigned keycode);
     void updateJoypad(int port, uint16_t state);
     void updateMouse(int buttonMask, int16_t dx, int16_t dy);
+
+    // Disk-control support is registered by a core through envCallback().
+    // Disk indices are zero-based at this layer.
+    bool swapDisk(unsigned diskIndex);
+    unsigned diskCount();
+    unsigned activeDiskIndex();
+    bool supportsDiskControl();
 
     void setWindow(ANativeWindow* window);
 
@@ -60,6 +68,8 @@ private:
     std::atomic<int16_t> mouseY_{0};
     CoreType coreType_ = CoreType::NONE;
     retro_keyboard_event_t keyboard_cb_ = nullptr;
+    retro_disk_control_callback diskControl_{};
+    bool diskControlAvailable_ = false;
 
     struct KeyboardEvent {
         bool down;
@@ -91,6 +101,7 @@ private:
 extern "C" {
     int PCSX_Run(const char* bios, const char* disc, const char* saveDir);
     int uae_init(const char* rom_path, const char* bios_path);
+    int uae_init_multi(const char* const* disk_paths, size_t disk_count, const char* bios_path);
     int dosbox_init(const char* config_path, const char* saveDir);
     int dsi_init(const char* rom_path);
     int xbox_init(const char* rom_path, const char* bios_path);

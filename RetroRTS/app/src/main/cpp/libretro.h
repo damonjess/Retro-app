@@ -350,6 +350,22 @@ struct retro_game_info
    const char *meta;
 };
 
+/*
+ * Disk-image control callbacks supplied by a Libretro core through
+ * RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE. A frontend uses this
+ * interface to eject, select, and reinsert an image from an M3U playlist.
+ */
+struct retro_disk_control_callback
+{
+   bool     (*set_eject_state)(bool ejected);
+   bool     (*get_eject_state)(void);
+   unsigned (*get_image_index)(void);
+   bool     (*set_image_index)(unsigned index);
+   unsigned (*get_num_images)(void);
+   bool     (*replace_image_index)(unsigned index, const struct retro_game_info *info);
+   bool     (*add_image_index)(void);
+};
+
 typedef void (*retro_video_refresh_t)(const void *data, unsigned width, unsigned height, size_t pitch);
 typedef void (*retro_audio_sample_t)(int16_t left, int16_t right);
 typedef size_t (*retro_audio_sample_batch_t)(const int16_t *data, size_t frames);

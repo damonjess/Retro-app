@@ -1,6 +1,7 @@
 #include <jni.h>
 #include <atomic>
 #include <string>
+#include <vector>
 #include <android/log.h>
 #include <android/native_window_jni.h>
 #include <dlfcn.h>
@@ -18,39 +19,86 @@ std::atomic<bool> g_amiga_running{false};
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_retrorts_ui_AmigaBridge_startAmigaNative(
-    JNIEnv* env, jclass, jstring gamePath) {
+    JNIEnv* env, jclass, jobjectArray diskPaths) {
 
     if (g_amiga_running.load()) return JNI_TRUE;
-    if (!gamePath) return JNI_FALSE;
+    if (!diskPaths) return JNI_FALSE;
 
-    const char* gpath = env->GetStringUTFChars(gamePath, nullptr);
+    const jsize diskCount = env->GetArrayLength(diskPaths);
+    if (diskCount <= 0) return JNI_FALSE;
 
-    if (!gpath) {
-        return JNI_FALSE;
+    std::vector<std::string> resolvedPaths;
+    resolvedPaths.reserve(static_cast<size_t>(diskCount));
+    std::string biosPath;
+
+    for (jsize index = 0; index < diskCount; ++index) {
+        auto diskPath = static_cast<jstring>(env->GetObjectArrayElement(diskPaths, index));
+        if (!diskPath) {
+            LOGE("Amiga launch failed: missing disk at index %d", index);
+            return JNI_FALSE;
+        }
+
+        const char* utfPath = env->GetStringUTFChars(diskPath, nullptr);
+        if (!utfPath) {
+            env->DeleteLocalRef(diskPath);
+            return JNI_FALSE;
+        }
+        const std::string path(utfPath);
+        env->ReleaseStringUTFChars(diskPath, utfPath);
+        env->DeleteLocalRef(diskPath);
+
+        const auto validation = retrorts::amiga::LaunchAmigaGame(path);
+        if (!validation.ok) {
+            LOGE("Amiga validation failed for disk %d: %s", index + 1, validation.message.c_str());
+            return JNI_FALSE;
+        }
+        if (index == 0) {
+            biosPath = validation.resolvedBiosPath;
+        }
+        resolvedPaths.push_back(validation.resolvedRomPath);
     }
 
-    LOGI("Starting Amiga via bridge: game=%s", gpath);
-
-    // Validate via amiga_core logic before starting
-    auto validation = retrorts::amiga::LaunchAmigaGame(gpath);
-    if (!validation.ok) {
-        LOGE("Amiga validation failed: %s", validation.message.c_str());
-        env->ReleaseStringUTFChars(gamePath, gpath);
-        return JNI_FALSE;
+    std::vector<const char*> diskPathPointers;
+    diskPathPointers.reserve(resolvedPaths.size());
+    for (const auto& path : resolvedPaths) {
+        diskPathPointers.push_back(path.c_str());
     }
 
-    int init_result = retrorts::uae_init(validation.resolvedRomPath.c_str(), validation.resolvedBiosPath.c_str());
-    if (init_result != 0) {
-        LOGE("UAE initialization failed via bridge with code %d", init_result);
-        env->ReleaseStringUTFChars(gamePath, gpath);
+    LOGI("Starting Amiga via bridge with %d disk(s); Disk 1=%s", diskCount,
+         diskPathPointers.front());
+    const int initResult = retrorts::uae_init_multi(
+        diskPathPointers.data(), diskPathPointers.size(), biosPath.c_str());
+    if (initResult != 0) {
+        LOGE("UAE initialization failed via bridge with code %d", initResult);
         return JNI_FALSE;
     }
 
     g_amiga_running.store(true);
     LOGI("Amiga emulator started successfully via bridge");
-
-    env->ReleaseStringUTFChars(gamePath, gpath);
     return JNI_TRUE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_retrorts_ui_AmigaBridge_swapDiskNative(JNIEnv*, jclass, jint diskIndex) {
+    if (!g_amiga_running.load() || diskIndex < 0) return JNI_FALSE;
+    return retrorts::LibretroHost::getInstance().swapDisk(static_cast<unsigned>(diskIndex))
+        ? JNI_TRUE
+        : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_retrorts_ui_AmigaBridge_getDiskCountNative(JNIEnv*, jclass) {
+    return static_cast<jint>(retrorts::LibretroHost::getInstance().diskCount());
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_retrorts_ui_AmigaBridge_getActiveDiskIndexNative(JNIEnv*, jclass) {
+    return static_cast<jint>(retrorts::LibretroHost::getInstance().activeDiskIndex());
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_retrorts_ui_AmigaBridge_isDiskControlAvailableNative(JNIEnv*, jclass) {
+    return retrorts::LibretroHost::getInstance().supportsDiskControl() ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT void JNICALL

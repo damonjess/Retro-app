@@ -56,6 +56,19 @@ object NativeEmulatorBridge {
         if (nativeLoaded) runCatching { sendKeyStringNative(text) }
     }
 
+    fun sendKeyCode(keycode: Int) {
+        if (nativeLoaded) runCatching { sendKeyCodeNative(keycode) }
+    }
+
+    fun getNumDisks(): Int =
+        if (nativeLoaded) runCatching { getNumDisksNative() }.getOrDefault(0) else 0
+
+    fun getCurrentDiskIndex(): Int =
+        if (nativeLoaded) runCatching { getCurrentDiskIndexNative() }.getOrDefault(-1) else -1
+
+    fun setDiskIndex(index: Int): Boolean =
+        if (nativeLoaded) runCatching { setDiskIndexNative(index) }.getOrDefault(false) else false
+
     @JvmStatic private external fun launchGameNative(console: String, romPath: String, cacheDir: String, saveDir: String): String
     @JvmStatic private external fun stopGameNative()
     @JvmStatic private external fun updateInputNative(port: Int, buttonMask: Int)
@@ -65,4 +78,8 @@ object NativeEmulatorBridge {
     @JvmStatic private external fun setSystemDirNative(systemDir: String)
     @JvmStatic private external fun setSaveDirNative(saveDir: String)
     @JvmStatic private external fun sendKeyStringNative(text: String)
+    @JvmStatic private external fun sendKeyCodeNative(keycode: Int)
+    @JvmStatic private external fun getNumDisksNative(): Int
+    @JvmStatic private external fun getCurrentDiskIndexNative(): Int
+    @JvmStatic private external fun setDiskIndexNative(index: Int): Boolean
 }

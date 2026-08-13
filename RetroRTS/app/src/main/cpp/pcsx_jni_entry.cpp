@@ -31,3 +31,18 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_retrorts_ui_NativeEmulatorBridge_updateMouseNative(JNIEnv*, jclass, jint buttonMask, jint dx, jint dy) {
     retrorts::LibretroHost::getInstance().updateMouse(buttonMask, static_cast<int16_t>(dx), static_cast<int16_t>(dy));
 }
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_retrorts_ui_NativeEmulatorBridge_getNumDisksNative(JNIEnv*, jclass) {
+    return retrorts::LibretroHost::getInstance().diskCount();
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_retrorts_ui_NativeEmulatorBridge_getCurrentDiskIndexNative(JNIEnv*, jclass) {
+    return retrorts::LibretroHost::getInstance().activeDiskIndex();
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_retrorts_ui_NativeEmulatorBridge_setDiskIndexNative(JNIEnv*, jclass, jint index) {
+    return retrorts::LibretroHost::getInstance().swapDisk(index) ? JNI_TRUE : JNI_FALSE;
+}

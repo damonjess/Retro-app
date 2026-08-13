@@ -6,6 +6,55 @@ import java.io.File
 object AmigaUtils {
     private const val AMIGA_SYSTEM_DIR = "RetroRTS/system/amiga"
     private const val AMIGA_GAMES_DIR = "RetroRTS/Games/Amiga"
+    private val numberedDiskPattern = Regex(
+        """(?i)^(.*?)[._\\s-]*(?:disk|disc)[._\\s-]*(\\d+)$"""
+    )
+
+    data class DiskSet(
+        val diskPaths: List<String>,
+        val selectedDiskNumber: Int,
+    ) {
+        val isMultiDisk: Boolean get() = diskPaths.size > 1
+    }
+
+    /**
+     * Finds numbered sibling images beside [filePath] and returns them in boot
+     * order. For example, selecting Dune_Disk1.adf yields Disk 1, Disk 2, and
+     * Disk 3 when all three files are present. Unnumbered images remain a
+     * one-item set.
+     */
+    fun diskSetFor(filePath: String): DiskSet {
+        val selectedFile = File(filePath)
+        val selectedMatch = numberedDiskPattern.matchEntire(selectedFile.nameWithoutExtension)
+            ?: return DiskSet(listOf(filePath), selectedDiskNumber = 1)
+        val parent = selectedFile.parentFile
+            ?: return DiskSet(listOf(filePath), selectedDiskNumber = 1)
+        val gameStem = selectedMatch.groupValues[1].trim().lowercase()
+        val extension = selectedFile.extension.lowercase()
+
+        val candidates = parent.listFiles()
+            ?.asSequence()
+            ?.filter { it.isFile && it.extension.lowercase() == extension }
+            ?.mapNotNull { file ->
+                val match = numberedDiskPattern.matchEntire(file.nameWithoutExtension)
+                    ?: return@mapNotNull null
+                val stem = match.groupValues[1].trim().lowercase()
+                if (stem != gameStem) return@mapNotNull null
+                val diskNumber = match.groupValues[2].toIntOrNull() ?: return@mapNotNull null
+                diskNumber to file.absolutePath
+            }
+            ?.sortedBy { it.first }
+            ?.toList()
+            .orEmpty()
+
+        if (candidates.isEmpty()) return DiskSet(listOf(filePath), selectedDiskNumber = 1)
+        val selectedNumber = selectedMatch.groupValues[2].toIntOrNull() ?: 1
+        val selectedPosition = candidates.indexOfFirst { it.first == selectedNumber }
+        return DiskSet(
+            diskPaths = candidates.map { it.second },
+            selectedDiskNumber = if (selectedPosition >= 0) selectedPosition + 1 else 1,
+        )
+    }
 
     /**
      * Verifies if the required Kickstart 1.3 ROM is present.
@@ -17,14 +66,12 @@ object AmigaUtils {
     }
 
     /**
-     * Checks if a file is Disk 2 or 3 of Dune (1992).
+     * Returns true only when a Dune disk image has at least one numbered
+     * sibling. Disk 1 is intentionally included because it is the normal boot
+     * target for a complete Dune installation.
      */
-    fun isDuneMultiDisk(filePath: String): Boolean {
-        val name = filePath.lowercase()
-        if (!name.contains("dune")) return false
-        return name.contains("disk 2") || name.contains("disk 3") || 
-               name.contains("disk2") || name.contains("disk3")
-    }
+    fun isDuneMultiDisk(filePath: String): Boolean =
+        File(filePath).name.contains("dune", ignoreCase = true) && diskSetFor(filePath).isMultiDisk
 
     /**
      * Identifies "messy" Dune filenames that should be renamed.

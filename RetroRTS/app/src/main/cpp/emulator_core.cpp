@@ -130,9 +130,48 @@ if exist dune.bat dune.bat
         auto result = retrorts::amiga::LaunchAmigaGame(romPath);
         if (!result.ok) return "ERROR: " + result.message;
 
-        // Pass the ADF directly to the libretro core.
+        std::string finalRom = result.resolvedRomPath;
+
+        // Multi-disk Dune detection (robust search)
+        std::string lowerPath = romPath;
+        std::transform(lowerPath.begin(), lowerPath.end(), lowerPath.begin(), ::tolower);
+
+        if (lowerPath.find("dune") != std::string::npos &&
+           (lowerPath.find("disk 1") != std::string::npos || lowerPath.find("disk1") != std::string::npos)) {
+
+            std::string dir = romPath.substr(0, romPath.rfind('/') + 1);
+            std::string m3uPath = cacheDir + "/dune.m3u";
+            std::ofstream f(m3uPath);
+            if (f) {
+                // Find potential siblings
+                auto findDisk = [&](int num) -> std::string {
+                    std::string n1 = "Dune_Disk" + std::to_string(num) + ".adf";
+                    std::string n2 = "Dune Disk " + std::to_string(num) + ".adf";
+                    if (std::ifstream(dir + n1).good()) return dir + n1;
+                    if (std::ifstream(dir + n2).good()) return dir + n2;
+                    // Fallback to what we have if it's disk 1
+                    if (num == 1) return romPath;
+                    return "";
+                };
+
+                std::string d1 = findDisk(1);
+                std::string d2 = findDisk(2);
+                std::string d3 = findDisk(3);
+
+                if (!d1.empty()) f << d1 << "\n";
+                if (!d2.empty()) f << d2 << "\n";
+                if (!d3.empty()) f << d3 << "\n";
+
+                f.close();
+                finalRom = m3uPath;
+                LOGI("Amiga: Multi-disk Dune detected, created M3U at %s", m3uPath.c_str());
+                LOGI("M3U content: 1:%s, 2:%s, 3:%s", d1.c_str(), d2.c_str(), d3.c_str());
+            }
+        }
+
+        // Pass the ADF or M3U directly to the libretro core.
         // We explicitly tell PUAE which Kickstart to use via core options (puae_kickstart)
-        int r = retrorts::uae_init(result.resolvedRomPath.c_str(), result.resolvedBiosPath.c_str());
+        int r = retrorts::uae_init(finalRom.c_str(), result.resolvedBiosPath.c_str());
         if (r != 0) {
             return "ERROR: UAE initialization failed via bridge with code " + std::to_string(r);
         }

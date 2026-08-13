@@ -39,6 +39,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.material3.*
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -73,6 +75,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.lifecycleScope
 import com.retrorts.ui.AmigaBridge
+import com.retrorts.ui.AmigaDiskSwapControls
 import com.retrorts.ui.AmigaUtils
 import com.retrorts.ui.ConsoleType
 import com.retrorts.ui.DosboxBridge
@@ -101,6 +104,8 @@ const val RETRO_DEVICE_ID_JOYPAD_A = 8
 const val RETRO_DEVICE_ID_JOYPAD_X = 9
 const val RETRO_DEVICE_ID_JOYPAD_L = 10
 const val RETRO_DEVICE_ID_JOYPAD_R = 11
+
+const val RETROK_ESCAPE = 27
 
 data class GameEntry(
     val name: String,
@@ -336,17 +341,11 @@ private suspend fun launchGameWithNativeBackend(
     }
 
     if (game.consoleType == ConsoleType.AMIGA) {
-        if (!AmigaUtils.isKick13Present()) {
-            return@withContext LaunchResult(false, 
-                "Kickstart 1.3 ROM not found!\n\n" +
-                "Required: /sdcard/RetroRTS/system/amiga/kick13.rom\n" +
-                "Without this, Dune will drop to a shell or fail to boot.")
-        }
-        
-        if (AmigaUtils.isDuneMultiDisk(game.filePath)) {
-            return@withContext LaunchResult(false, 
-                "Warning: You are launching Disk 2 or 3.\n\n" +
-                "Dune must be started from Disk 1. Please launch 'Dune_Disk1.adf' instead.")
+        val started = AmigaBridge.startAmiga(game.filePath)
+        return@withContext if (started) {
+            LaunchResult(true, "OK: Amiga emulator started")
+        } else {
+            LaunchResult(false, "Amiga launch failed: check Kickstart ROM and disk image.")
         }
     }
 
@@ -1300,6 +1299,8 @@ private fun DosboxPlayScreen(game: GameEntry, onExit: () -> Unit) {
     var showKeyboardDialog by remember { mutableStateOf(false) }
     var keyboardText by remember { mutableStateOf("") }
     var statusMsg by remember { mutableStateOf("") }
+    var numDisks by remember { mutableStateOf(0) }
+    var currentDisk by remember { mutableStateOf(0) }
     var currentMask by remember { mutableStateOf(0) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1320,8 +1321,10 @@ private fun DosboxPlayScreen(game: GameEntry, onExit: () -> Unit) {
 
     // Auto-detect high refresh rate
     LaunchedEffect(Unit) {
-        if (game.name.lowercase().contains("dune") && game.consoleType == ConsoleType.AMIGA) {
-            statusMsg = "Multi-disk game detected. Swap UI unavailable."
+        if (game.consoleType == ConsoleType.AMIGA) {
+            delay(500) // let the core finish registering its disk control interface
+            numDisks = NativeEmulatorBridge.getNumDisks()
+            currentDisk = NativeEmulatorBridge.getCurrentDiskIndex()
         }
         
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -1446,7 +1449,10 @@ private fun DosboxPlayScreen(game: GameEntry, onExit: () -> Unit) {
                     color = Color(0xAAD8C77A),
                     style = MaterialTheme.typography.labelSmall
                 )
-                if (statusMsg.isNotBlank()) {
+                if (game.consoleType == ConsoleType.AMIGA) {
+                    val diskSet = remember(game.filePath) { AmigaUtils.diskSetFor(game.filePath) }
+                    AmigaDiskSwapControls(diskSet)
+                } else if (statusMsg.isNotBlank()) {
                     Text(statusMsg, color = Color(0xFFD8C77A),
                         style = MaterialTheme.typography.labelSmall)
                 }
@@ -1484,6 +1490,14 @@ private fun DosboxPlayScreen(game: GameEntry, onExit: () -> Unit) {
                     modifier = Modifier.background(Color(0x44FFFFFF), CircleShape).size(40.dp)
                 ) {
                     Text("R", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+
+                IconButton(
+                    onClick = { NativeEmulatorBridge.sendKeyCode(RETROK_ESCAPE) },
+                    modifier = Modifier.background(Color(0x44FFFFFF), CircleShape).size(40.dp)
+                ) {
+                    Text("ESC", color = Color.White, fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.labelSmall)
                 }
 
                 IconButton(

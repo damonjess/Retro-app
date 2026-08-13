@@ -8,6 +8,8 @@
 #include <cstdarg>
 #include <set>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <sys/mman.h>
 #include "pcsx_rearmed/frontend/plugin_lib.h"
 
@@ -121,6 +123,9 @@ LibretroHost::~LibretroHost() {
 
 int LibretroHost::loadCore(const std::string& corePath) {
     std::lock_guard<std::recursive_mutex> lock(coreMutex_);
+    // Core callbacks are only valid for the currently loaded core.
+    diskControl_ = {};
+    diskControlAvailable_ = false;
     if (coreLib_) {
         dlclose(coreLib_);
         coreLib_ = nullptr;
@@ -229,6 +234,13 @@ void LibretroHost::sendKeyString(const std::string& text) {
     }
 }
 
+void LibretroHost::sendKeyCode(unsigned keycode) {
+    std::lock_guard<std::recursive_mutex> lock(coreMutex_);
+    std::lock_guard<std::mutex> qlock(queueMutex_);
+    keyEventQueue_.push_back({true, keycode, 0});
+    keyEventQueue_.push_back({false, keycode, 0});
+}
+
 void LibretroHost::updateJoypad(int port, uint16_t state) {
     if (port >= 0 && port < 2) {
         padState_[port].store(state);
@@ -286,6 +298,58 @@ void LibretroHost::updateMouse(int buttonMask, int16_t dx, int16_t dy) {
     mouseButtons_.store(static_cast<uint16_t>(buttonMask));
     mouseX_.fetch_add(dx);
     mouseY_.fetch_add(dy);
+}
+
+bool LibretroHost::swapDisk(unsigned diskIndex) {
+    std::lock_guard<std::recursive_mutex> lock(coreMutex_);
+    if (!running_.load() || !diskControlAvailable_ ||
+        !diskControl_.set_eject_state || !diskControl_.set_image_index ||
+        !diskControl_.get_num_images) {
+        LOGE("Disk swap unavailable: core did not register a complete disk-control interface");
+        return false;
+    }
+
+    const unsigned imageCount = diskControl_.get_num_images();
+    if (diskIndex >= imageCount) {
+        LOGE("Disk swap rejected: requested index %u, but only %u images are available", diskIndex, imageCount);
+        return false;
+    }
+
+    // Libretro requires selecting an image while the virtual drive is ejected.
+    if (!diskControl_.set_eject_state(true)) {
+        LOGE("Disk swap failed: core refused to eject the current image");
+        return false;
+    }
+
+    const bool selected = diskControl_.set_image_index(diskIndex);
+    const bool inserted = diskControl_.set_eject_state(false);
+    if (!selected || !inserted) {
+        LOGE("Disk swap failed: selected=%d inserted=%d for image %u", selected ? 1 : 0,
+             inserted ? 1 : 0, diskIndex);
+        return false;
+    }
+
+    LOGI("Disk swap complete: selected image %u of %u", diskIndex + 1, imageCount);
+    return true;
+}
+
+unsigned LibretroHost::diskCount() {
+    std::lock_guard<std::recursive_mutex> lock(coreMutex_);
+    return (diskControlAvailable_ && diskControl_.get_num_images)
+        ? diskControl_.get_num_images()
+        : 0;
+}
+
+unsigned LibretroHost::activeDiskIndex() {
+    std::lock_guard<std::recursive_mutex> lock(coreMutex_);
+    return (diskControlAvailable_ && diskControl_.get_image_index)
+        ? diskControl_.get_image_index()
+        : 0;
+}
+
+bool LibretroHost::supportsDiskControl() {
+    std::lock_guard<std::recursive_mutex> lock(coreMutex_);
+    return diskControlAvailable_;
 }
 
 int LibretroHost::loadGame(const std::string& romPath) {
@@ -369,6 +433,8 @@ void LibretroHost::stop() {
         dlclose(coreLib_);
         coreLib_ = nullptr;
     }
+    diskControl_ = {};
+    diskControlAvailable_ = false;
     LOGI("Host stopped");
 }
 
@@ -382,6 +448,20 @@ bool LibretroHost::envCallback(unsigned cmd, void* data) {
         case RETRO_ENVIRONMENT_SET_VARIABLES:
         case RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME:
             return true;
+        case RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE: {
+            const auto* callback = static_cast<const retro_disk_control_callback*>(data);
+            if (!callback || !callback->set_eject_state || !callback->set_image_index ||
+                !callback->get_num_images || !callback->get_image_index) {
+                host.diskControl_ = {};
+                host.diskControlAvailable_ = false;
+                LOGE("envCallback: Core supplied an incomplete disk-control interface");
+                return false;
+            }
+            host.diskControl_ = *callback;
+            host.diskControlAvailable_ = true;
+            LOGI("envCallback: Core registered disk-control interface");
+            return true;
+        }
         case RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK: {
             LOGI("envCallback: Core requested RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK");
             const struct retro_keyboard_callback *cb = (const struct retro_keyboard_callback*)data;
@@ -612,7 +692,24 @@ extern "C" int PCSX_Run(const char* bios, const char* disc, const char* saveDir)
 }
 
 extern "C" int uae_init(const char* rom_path, const char* bios_path) {
-    LOGE("Bridge: uae_init called for %s", rom_path);
+    const char* const singleDisk[] = {rom_path};
+    return uae_init_multi(singleDisk, 1, bios_path);
+}
+
+extern "C" int uae_init_multi(const char* const* disk_paths, size_t disk_count, const char* bios_path) {
+    if (!disk_paths || disk_count == 0 || !disk_paths[0]) {
+        LOGE("Bridge: uae_init_multi called without a launch disk");
+        return -3;
+    }
+
+    for (size_t index = 0; index < disk_count; ++index) {
+        if (!disk_paths[index] || disk_paths[index][0] == '\0') {
+            LOGE("Bridge: uae_init_multi received an empty disk path at index %zu", index);
+            return -3;
+        }
+    }
+
+    LOGI("Bridge: uae_init_multi called with %zu disk(s); disk 1=%s", disk_count, disk_paths[0]);
     auto& host = LibretroHost::getInstance();
     host.stop();
     host.setCoreType(CoreType::AMIGA);
@@ -634,8 +731,37 @@ extern "C" int uae_init(const char* rom_path, const char* bios_path) {
     if (host.loadCore("libpuae_libretro.so") != 0) {
         if (host.loadCore("libpuae.so") != 0) return -1;
     }
-    // Pass the ADF directly — the core handles kickstart detection
-    if (host.loadGame(rom_path) != 0) return -2;
+    std::string contentPath = disk_paths[0];
+    if (disk_count > 1) {
+        const std::filesystem::path playlistDir =
+            std::filesystem::path("/storage/emulated/0/RetroRTS/Saves/Amiga") / "playlists";
+        const std::filesystem::path playlistPath = playlistDir / "active-disks.m3u";
+        std::error_code error;
+        std::filesystem::create_directories(playlistDir, error);
+        if (error) {
+            LOGE("Bridge: failed to create Amiga playlist directory: %s", error.message().c_str());
+            return -4;
+        }
+
+        std::ofstream playlist(playlistPath, std::ios::out | std::ios::trunc);
+        if (!playlist) {
+            LOGE("Bridge: failed to create multi-disk playlist: %s", playlistPath.c_str());
+            return -4;
+        }
+        for (size_t index = 0; index < disk_count; ++index) {
+            playlist << disk_paths[index] << '\n';
+        }
+        playlist.close();
+        if (!playlist) {
+            LOGE("Bridge: failed while writing multi-disk playlist: %s", playlistPath.c_str());
+            return -4;
+        }
+
+        contentPath = playlistPath.string();
+        LOGI("Bridge: loading Amiga disk playlist %s (%zu images)", contentPath.c_str(), disk_count);
+    }
+
+    if (host.loadGame(contentPath) != 0) return -2;
 
     std::thread([&host]() { host.runLoop(); }).detach();
     return 0;

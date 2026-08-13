@@ -72,3 +72,8 @@ Java_com_retrorts_ui_NativeEmulatorBridge_sendKeyStringNative(JNIEnv* env, jclas
         env->ReleaseStringUTFChars(text, cText);
     }
 }
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_retrorts_ui_NativeEmulatorBridge_sendKeyCodeNative(JNIEnv*, jclass, jint keycode) {
+    retrorts::LibretroHost::getInstance().sendKeyCode((unsigned)keycode);
+}
