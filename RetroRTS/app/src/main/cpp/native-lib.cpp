@@ -3,6 +3,11 @@
 #include <android/native_window_jni.h>
 #include "emulator_core.h"
 #include "libretro_bridge.h"
+#include <android/log.h>
+
+#define LOG_TAG "LibretroBridge"
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_retrorts_ui_NativeEmulatorBridge_launchGameNative(JNIEnv* env, jclass, jstring console, jstring romPath, jstring cacheDir, jstring saveDir) {

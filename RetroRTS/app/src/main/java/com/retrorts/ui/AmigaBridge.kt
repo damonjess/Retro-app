@@ -57,6 +57,10 @@ object AmigaBridge {
         if (nativeLoaded) runCatching { updateInputNative(port, buttonMask) }
     }
 
+    fun updateMouse(buttonMask: Int, dx: Int, dy: Int) {
+        if (nativeLoaded) runCatching { updateMouseNative(buttonMask, dx, dy) }
+    }
+
     /**
      * Set the rendering surface for the emulator.
      * 
@@ -71,5 +75,6 @@ object AmigaBridge {
     @JvmStatic private external fun stopAmigaNative()
     @JvmStatic private external fun isRunningNative(): Boolean
     @JvmStatic private external fun updateInputNative(port: Int, buttonMask: Int)
+    @JvmStatic private external fun updateMouseNative(buttonMask: Int, dx: Int, dy: Int)
     @JvmStatic private external fun setSurfaceNative(surface: Surface?)
 }

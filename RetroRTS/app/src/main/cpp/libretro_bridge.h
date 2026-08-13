@@ -55,6 +55,7 @@ private:
     std::string amigaKickstart_;
     double lastSampleRate_ = 44100.0;
     std::atomic<uint16_t> mouseButtons_{0};
+    std::atomic<int64_t> mouseHoldUntil_{0};
     std::atomic<int16_t> mouseX_{0};
     std::atomic<int16_t> mouseY_{0};
     CoreType coreType_ = CoreType::NONE;

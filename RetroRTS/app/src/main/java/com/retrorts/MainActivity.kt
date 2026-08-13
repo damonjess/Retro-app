@@ -17,6 +17,7 @@ import android.os.PerformanceHintManager
 import android.provider.Settings
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import android.view.MotionEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -1387,6 +1388,33 @@ private fun DosboxPlayScreen(game: GameEntry, onExit: () -> Unit) {
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
                 SurfaceView(ctx).apply {
+                    if (game.consoleType == ConsoleType.AMIGA) {
+                        var lastX = 0f
+                        var lastY = 0f
+                        setOnTouchListener { _, event ->
+                            when (event.actionMasked) {
+                                MotionEvent.ACTION_DOWN -> {
+                                    lastX = event.x
+                                    lastY = event.y
+                                    NativeEmulatorBridge.updateMouse(1, 0, 0)
+                                }
+                                MotionEvent.ACTION_MOVE -> {
+                                    val dx = (event.x - lastX).toInt()
+                                    val dy = (event.y - lastY).toInt()
+                                    lastX = event.x
+                                    lastY = event.y
+                                    if (dx != 0 || dy != 0) {
+                                        NativeEmulatorBridge.updateMouse(1, dx, dy)
+                                    }
+                                }
+                                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                                    NativeEmulatorBridge.updateMouse(0, 0, 0)
+                                }
+                            }
+                            true
+                        }
+                    }
+
                     holder.addCallback(object : SurfaceHolder.Callback {
                         override fun surfaceCreated(h: SurfaceHolder) {
                             NativeEmulatorBridge.setSurface(h.surface)

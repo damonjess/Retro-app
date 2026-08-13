@@ -9,7 +9,7 @@
 #include <algorithm>
 #include <fstream>
 
-#define LOG_TAG "RetroRTS_Core"
+#define LOG_TAG "LibretroBridge"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
@@ -36,6 +36,8 @@ std::string LaunchGame(const std::string& console,
         std::transform(s.begin(), s.end(), s.begin(), ::toupper);
         return s;
     }();
+
+    LOGE("LaunchGame: console=%s, romPath=%s", c.c_str(), romPath.c_str());
 
     // ── PS1 ──────────────────────────────────────────────────────────────
     if (c == "PS1") {

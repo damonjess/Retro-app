@@ -11,6 +11,13 @@
 #include <sys/mman.h>
 #include "pcsx_rearmed/frontend/plugin_lib.h"
 
+#ifndef RETRO_DEVICE_ID_MOUSE_X
+#define RETRO_DEVICE_ID_MOUSE_X      0
+#define RETRO_DEVICE_ID_MOUSE_Y      1
+#define RETRO_DEVICE_ID_MOUSE_LEFT   2
+#define RETRO_DEVICE_ID_MOUSE_RIGHT  3
+#endif
+
 #define LOG_TAG "LibretroBridge"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
@@ -174,13 +181,20 @@ int LibretroHost::loadCore(const std::string& corePath) {
 
     retro_init_fn();
 
-    LOGI("Core initialized");
-
+    // Set ports AFTER retro_init — some cores ignore it before init
     if (retro_set_controller_port_device_fn) {
-        LOGI("Setting controller port devices to RETRO_DEVICE_JOYPAD");
-        retro_set_controller_port_device_fn(0, RETRO_DEVICE_JOYPAD);
-        retro_set_controller_port_device_fn(1, RETRO_DEVICE_JOYPAD);
+        if (coreType_ == CoreType::AMIGA) {
+            LOGI("Amiga: port 0 = MOUSE, port 1 = JOYPAD");
+            retro_set_controller_port_device_fn(0, RETRO_DEVICE_MOUSE);
+            retro_set_controller_port_device_fn(1, RETRO_DEVICE_JOYPAD);
+        } else {
+            LOGI("Setting controller port devices to RETRO_DEVICE_JOYPAD");
+            retro_set_controller_port_device_fn(0, RETRO_DEVICE_JOYPAD);
+            retro_set_controller_port_device_fn(1, RETRO_DEVICE_JOYPAD);
+        }
     }
+
+    LOGI("Core initialized");
 
     keyboard_cb_ = nullptr;
     return 0;
@@ -216,12 +230,59 @@ void LibretroHost::sendKeyString(const std::string& text) {
 }
 
 void LibretroHost::updateJoypad(int port, uint16_t state) {
+    if (state != 0) {
+        LOGE("updateJoypad (entry): port=%d, state=0x%04X, core=%d", port, state, (int)coreType_);
+    }
+
     if (port >= 0 && port < 2) {
         padState_[port].store(state);
     }
+
+    if (coreType_ == CoreType::AMIGA) {
+        uint16_t anyBtn = padState_[0].load() | padState_[1].load();
+        // Everything EXCEPT D-pad directions (UP=4, DOWN=5, LEFT=6, RIGHT=7)
+        static const uint16_t CLICK_MASK =
+            (1U<<0) | (1U<<1) | (1U<<2) | (1U<<3) |
+            (1U<<8) | (1U<<9) | (1U<<10) | (1U<<11) |
+            (1U<<12) | (1U<<13) | (1U<<14) | (1U<<15);
+
+        bool pressed = (anyBtn & CLICK_MASK) != 0;
+
+        // ---- Sustained mouse click (500 ms) ----
+        if (pressed) {
+            using namespace std::chrono;
+            int64_t now = duration_cast<milliseconds>(
+                steady_clock::now().time_since_epoch()).count();
+            mouseHoldUntil_.store(now + 500);
+            mouseButtons_.fetch_or(1);
+        } else {
+            using namespace std::chrono;
+            int64_t now = duration_cast<milliseconds>(
+                steady_clock::now().time_since_epoch()).count();
+            if (now > mouseHoldUntil_.load()) {
+                mouseButtons_.fetch_and(~1);
+            }
+        }
+
+        // ---- Keyboard mirror: Space + Enter ----
+        keyState_[RETROK_SPACE].store(pressed);
+        keyState_[RETROK_RETURN].store(pressed);
+
+        if (anyBtn != 0) {
+            LOGE("updateJoypad (Amiga): anyBtn=0x%04X pressed=%d mouseBtns=%d",
+                 anyBtn, pressed ? 1 : 0, mouseButtons_.load() & 1);
+        }
+    }
+}
+
+void LibretroHost::updateMouse(int buttonMask, int16_t dx, int16_t dy) {
+    mouseButtons_.store(static_cast<uint16_t>(buttonMask));
+    mouseX_.fetch_add(dx);
+    mouseY_.fetch_add(dy);
 }
 
 int LibretroHost::loadGame(const std::string& romPath) {
+    LOGI("LibretroHost::loadGame: %s", romPath.c_str());
     std::lock_guard<std::recursive_mutex> lock(coreMutex_);
     if (!coreLib_ || !retro_load_game_fn) return -1;
 
@@ -323,7 +384,9 @@ bool LibretroHost::envCallback(unsigned cmd, void* data) {
         case RETRO_ENVIRONMENT_GET_INPUT_DEVICE_CAPABILITIES: {
             LOGI("envCallback: Core requested RETRO_ENVIRONMENT_GET_INPUT_DEVICE_CAPABILITIES");
             uint64_t *mask = (uint64_t*)data;
-            *mask = (1ULL << RETRO_DEVICE_JOYPAD) | (1ULL << RETRO_DEVICE_KEYBOARD);
+            *mask = (1ULL << RETRO_DEVICE_JOYPAD) |
+                    (1ULL << RETRO_DEVICE_KEYBOARD) |
+                    (1ULL << RETRO_DEVICE_MOUSE);
             return true;
         }
         case RETRO_ENVIRONMENT_GET_LOG_INTERFACE: {
@@ -475,23 +538,53 @@ void LibretroHost::inputPollCallback() {
 
 int16_t LibretroHost::inputStateCallback(unsigned port, unsigned device, unsigned index, unsigned id) {
     auto& host = getInstance();
-    if (port < 2) {
-        if (device == RETRO_DEVICE_JOYPAD) {
-            int16_t state = (host.padState_[port].load() & (1 << id)) ? 1 : 0;
-            return state;
+    if (port >= 2) return 0;
+
+    // Verbose logging for Amiga to see what core is asking for
+    static int global_counter = 0;
+    if (host.coreType_ == CoreType::AMIGA && ++global_counter % 2000 == 0) {
+        LOGE("inputStateCallback: Core is asking for device=%u on port=%u (id=%u)", device, port, id);
+    }
+
+    if (device == RETRO_DEVICE_JOYPAD) {
+        int16_t v = (host.padState_[port].load() & (1U << id)) ? 1 : 0;
+        if (v && host.coreType_ == CoreType::AMIGA) {
+            LOGE("inputStateCallback: JOYPAD port=%u id=%u -> 1", port, id);
         }
-        if (device == RETRO_DEVICE_KEYBOARD) {
-            // Amiga Fix: Map Gamepad START to Space bar to allow skipping intros
-            if (host.coreType_ == CoreType::AMIGA && id == RETROK_SPACE) {
-                if (host.padState_[port].load() & (1 << RETRO_DEVICE_ID_JOYPAD_START)) {
-                    return 1;
-                }
+        return v;
+    }
+
+    if (device == RETRO_DEVICE_MOUSE) {
+        // Log every mouse query if button is pressed, otherwise every 100th
+        bool btn = (host.mouseButtons_.load() & 1) != 0;
+        static int mc = 0;
+        if (btn || (++mc % 100 == 0)) {
+            LOGE("inputStateCallback: MOUSE port=%u id=%u (btn_active=%d)", port, id, btn ? 1 : 0);
+        }
+
+        switch (id) {
+            case RETRO_DEVICE_ID_MOUSE_X:
+                return host.mouseX_.exchange(0);
+            case RETRO_DEVICE_ID_MOUSE_Y:
+                return host.mouseY_.exchange(0);
+            case RETRO_DEVICE_ID_MOUSE_LEFT:
+                return (host.mouseButtons_.load() & 1) ? 1 : 0;
+            case RETRO_DEVICE_ID_MOUSE_RIGHT:
+                return (host.mouseButtons_.load() & 2) ? 1 : 0;
+        }
+        return 0;
+    }
+
+    if (device == RETRO_DEVICE_KEYBOARD) {
+        if (id < 512) {
+            int16_t v = host.keyState_[id].load() ? 1 : 0;
+            if (v && host.coreType_ == CoreType::AMIGA) {
+                LOGE("inputStateCallback: KEYBOARD id=%u -> 1", id);
             }
-            if (id < 512) {
-                return host.keyState_[id].load() ? 1 : 0;
-            }
+            return v;
         }
     }
+
     return 0;
 }
 
@@ -512,7 +605,7 @@ extern "C" int PCSX_Run(const char* bios, const char* disc, const char* saveDir)
 }
 
 extern "C" int uae_init(const char* rom_path, const char* bios_path) {
-    LOGI("Bridge: uae_init called for %s (bios=%s)", rom_path, bios_path ? bios_path : "none");
+    LOGE("Bridge: uae_init called for %s", rom_path);
     auto& host = LibretroHost::getInstance();
     host.stop();
     host.setCoreType(CoreType::AMIGA);
