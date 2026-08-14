@@ -30,6 +30,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -55,6 +56,7 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -66,6 +68,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
@@ -84,7 +87,16 @@ import com.retrorts.ui.GameProfile
 import com.retrorts.ui.GameProfileStore
 import com.retrorts.ui.GamePathValidator
 import com.retrorts.ui.NativeEmulatorBridge
+import com.retrorts.ui.RetroButton
+import com.retrorts.ui.RetroCard
+import com.retrorts.ui.ScanlineOverlay
 import com.retrorts.ui.downloads.DirectImportScreen
+import com.retrorts.ui.theme.RetroTheme
+import com.retrorts.ui.theme.RetroNeonCyan
+import com.retrorts.ui.theme.RetroNeonMagenta
+import com.retrorts.ui.theme.RetroNeonGreen
+import com.retrorts.ui.theme.RetroPanel
+import com.retrorts.ui.theme.RetroFontFamily
 import kotlinx.coroutines.*
 import java.io.File
 import java.io.InputStream
@@ -151,14 +163,17 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            RetroRtsTheme {
-                RootApp(
-                    ::requestAudioFocus,
-                    ::abandonAudioFocus,
-                    ::startThermalMonitor,
-                    ::hasStoragePermission,
-                    ::requestStoragePermissions
-                )
+            RetroTheme {
+                Box {
+                    RootApp(
+                        ::requestAudioFocus,
+                        ::abandonAudioFocus,
+                        ::startThermalMonitor,
+                        ::hasStoragePermission,
+                        ::requestStoragePermissions
+                    )
+                    ScanlineOverlay()
+                }
             }
         }
     }
@@ -430,35 +445,39 @@ private fun RootApp(
         AlertDialog(
             onDismissRequest = { },
             confirmButton = { },
-            title = { Text("Launching Engine") },
-            text = { Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) { CircularProgressIndicator(); Text("Loading native components...", modifier = Modifier.padding(top = 8.dp)) } }
+            title = { Text("BOOTING SYSTEM", fontFamily = RetroFontFamily, color = RetroNeonCyan) },
+            text = { Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) { 
+                CircularProgressIndicator(color = RetroNeonCyan); 
+                Text("LOADING NATIVE CORES...", fontFamily = RetroFontFamily, fontSize = 10.sp, color = Color.Gray, modifier = Modifier.padding(top = 8.dp)) 
+            } },
+            containerColor = RetroPanel
         )
     }
 
     launchError?.let { message ->
         AlertDialog(
             onDismissRequest = { launchError = null },
-            confirmButton = { Button(onClick = { launchError = null }) { Text("OK") } },
-            title = { Text("Launch failed") },
-            text = { Text(message) },
+            confirmButton = { RetroButton(onClick = { launchError = null }, text = "ABORT") },
+            title = { Text("CORE EXCEPTION", fontFamily = RetroFontFamily, color = Color.Red) },
+            text = { Text(message.uppercase(), fontFamily = RetroFontFamily, fontSize = 10.sp, color = Color.White) },
+            containerColor = RetroPanel
         )
     }
 
     if (showAbout) {
         AlertDialog(
             onDismissRequest = { showAbout = false },
-            confirmButton = { Button(onClick = { showAbout = false }) { Text("Close") } },
-            title = { Text("About RetroRTS") },
+            confirmButton = { RetroButton(onClick = { showAbout = false }, text = "BACK") },
+            title = { Text("RETRO-RTS v1.0", fontFamily = RetroFontFamily, color = RetroNeonCyan) },
             text  = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Powered by DOSBox, Amiga, and PS1 emulator backends.",
-                        color = Color.White)
-                    Text("Uses Jetpack Compose, Kotlin, and Android NDK.",
-                        color = Color.White)
-                    Text("Always respect BIOS and game licences.",
-                        color = Color(0xFFB9B38A))
+                    Text("MULTI-CORE EMULATION ENVIRONMENT", fontFamily = RetroFontFamily, fontSize = 10.sp, color = Color.White)
+                    Text("ENGINE: DOSBOX-PURE / LIBRETRO", fontFamily = RetroFontFamily, fontSize = 10.sp, color = RetroNeonMagenta)
+                    Text("UI: COMPOSE GLOW v2", fontFamily = RetroFontFamily, fontSize = 10.sp, color = RetroNeonGreen)
+                    Text("ENSURE VALID FIRMWARE IS MAPPED.", fontFamily = RetroFontFamily, fontSize = 10.sp, color = Color.Gray)
                 }
-            }
+            },
+            containerColor = RetroPanel
         )
     }
 
@@ -504,7 +523,17 @@ private fun RootApp(
     }
 }
 
-@Composable private fun SplashScreen() { Box(Modifier.fillMaxSize().background(Color(0xFF1B1A16)), contentAlignment = Alignment.Center) { Column(horizontalAlignment=Alignment.CenterHorizontally){ Text("RetroRTS", color=Color(0xFFD8C77A), style=MaterialTheme.typography.headlineLarge, fontWeight=FontWeight.Bold); Text("Command Center Booting...", color=Color(0xFF93A17B)) } } }
+@Composable private fun SplashScreen() { 
+    Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) { 
+        Column(horizontalAlignment=Alignment.CenterHorizontally){ 
+            Text("RETRO-RTS", color=RetroNeonCyan, fontFamily = RetroFontFamily, fontSize = 32.sp, fontWeight=FontWeight.Bold)
+            Spacer(Modifier.height(8.dp))
+            Text("BIOS INITIALIZING...", color=RetroNeonMagenta, fontFamily = RetroFontFamily, fontSize = 10.sp)
+            Spacer(Modifier.height(4.dp))
+            Text("KERNEL VERSION 1.0.42", color=Color.Gray, fontFamily = RetroFontFamily, fontSize = 8.sp)
+        } 
+    } 
+}
 
 @Composable
 private fun PermissionScreen(onRequest: () -> Unit) {
@@ -512,7 +541,7 @@ private fun PermissionScreen(onRequest: () -> Unit) {
     val storageOk = (context as? MainActivity)?.hasStoragePermission() ?: false
 
     Box(
-        Modifier.fillMaxSize().background(Color(0xFF1B1A16)),
+        Modifier.fillMaxSize().background(Color.Black),
         contentAlignment = Alignment.Center
     ) {
         Column(
@@ -521,50 +550,49 @@ private fun PermissionScreen(onRequest: () -> Unit) {
             modifier = Modifier.padding(24.dp)
         ) {
             Text(
-                "Storage Access Required",
-                color = Color(0xFFD8C77A),
-                style = MaterialTheme.typography.headlineSmall,
+                "SYSTEM ACCESS DENIED",
+                color = Color.Red,
+                fontFamily = RetroFontFamily,
+                fontSize = 20.sp,
                 fontWeight = FontWeight.Bold
             )
             
-            Surface(
-                color = if (storageOk) Color(0xFF2E7D32) else Color(0xFFC62828),
-                shape = RoundedCornerShape(4.dp)
-            ) {
+            RetroCard {
                 Text(
-                    text = if (storageOk) "Status: GRANTED" else "Status: RESTRICTED",
-                    color = Color.White,
-                    style = MaterialTheme.typography.labelMedium,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    text = if (storageOk) "STATUS: AUTHORIZED" else "STATUS: ACCESS_VIOLATION",
+                    color = if (storageOk) RetroNeonGreen else Color.Red,
+                    fontFamily = RetroFontFamily,
+                    fontSize = 10.sp,
+                    modifier = Modifier.padding(8.dp)
                 )
             }
 
             Text(
-                "RetroRTS needs 'All Files Access' to manage your game library. " +
-                        "On the next screen, find RetroRTS and toggle 'Allow access to manage all files'.",
-                color = Color.White,
+                "RETRO-RTS REQUIRES FULL DISK ACCESS TO MANAGE CORE ASSETS AND ROM DATA. PLEASE GRANT PERMISSION IN SYSTEM SETTINGS.",
+                color = Color.Gray,
+                fontFamily = RetroFontFamily,
+                fontSize = 10.sp,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
             
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(
+                RetroButton(
                     onClick = onRequest,
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A6A2A))
-                ) { 
-                    Text("Open Settings") 
-                }
+                    text = "GRANT ACCESS",
+                    color = RetroNeonMagenta
+                )
                 
-                OutlinedButton(
+                RetroButton(
                     onClick = { 
                         if (storageOk) {
-                            Toast.makeText(context, "Permission verified!", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "LINK ESTABLISHED", Toast.LENGTH_SHORT).show()
                         } else {
-                            Toast.makeText(context, "Still restricted. Check settings.", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "ERROR: ACCESS STILL RESTRICTED", Toast.LENGTH_SHORT).show()
                         }
-                    }
-                ) {
-                    Text("Check Again", color = Color.White)
-                }
+                    },
+                    text = "RE-SCAN",
+                    color = Color.DarkGray
+                )
             }
             
             Text(
@@ -686,32 +714,63 @@ private fun LauncherScreen(
     }
 
     Scaffold(
-        containerColor = Color(0xFF1B1A16),
+        containerColor = Color.Black,
         bottomBar = {
-            NavigationBar(containerColor = Color(0xFF111110)) {
+            NavigationBar(
+                containerColor = Color(0xFF111111),
+                tonalElevation = 8.dp
+            ) {
                 NavigationBarItem(
                     selected = activeTab == HomeTab.LIBRARY,
                     onClick  = { activeTab = HomeTab.LIBRARY },
                     icon     = { Icon(Icons.Filled.SportsEsports, contentDescription = "Library") },
-                    label    = { Text("Library") }
+                    label    = { Text("LIBRARY", fontFamily = RetroFontFamily, fontSize = 9.sp) },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = RetroNeonCyan,
+                        selectedTextColor = RetroNeonCyan,
+                        unselectedIconColor = Color.Gray,
+                        unselectedTextColor = Color.Gray,
+                        indicatorColor = RetroNeonCyan.copy(alpha = 0.1f)
+                    )
                 )
                 NavigationBarItem(
                     selected = activeTab == HomeTab.BIOS,
                     onClick  = { activeTab = HomeTab.BIOS },
                     icon     = { Icon(Icons.Filled.Memory, contentDescription = "BIOS") },
-                    label    = { Text("BIOS") }
+                    label    = { Text("BIOS", fontFamily = RetroFontFamily, fontSize = 9.sp) },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = RetroNeonMagenta,
+                        selectedTextColor = RetroNeonMagenta,
+                        unselectedIconColor = Color.Gray,
+                        unselectedTextColor = Color.Gray,
+                        indicatorColor = RetroNeonMagenta.copy(alpha = 0.1f)
+                    )
                 )
                 NavigationBarItem(
                     selected = activeTab == HomeTab.DOWNLOAD,
                     onClick  = { activeTab = HomeTab.DOWNLOAD },
                     icon     = { Icon(Icons.Filled.Download, contentDescription = "Download") },
-                    label    = { Text("Download") }
+                    label    = { Text("IMPORT", fontFamily = RetroFontFamily, fontSize = 9.sp) },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = RetroNeonGreen,
+                        selectedTextColor = RetroNeonGreen,
+                        unselectedIconColor = Color.Gray,
+                        unselectedTextColor = Color.Gray,
+                        indicatorColor = RetroNeonGreen.copy(alpha = 0.1f)
+                    )
                 )
                 NavigationBarItem(
                     selected = activeTab == HomeTab.SETTINGS,
                     onClick  = { activeTab = HomeTab.SETTINGS },
                     icon     = { Icon(Icons.Filled.Settings, contentDescription = "Settings") },
-                    label    = { Text("Settings") }
+                    label    = { Text("SETUP", fontFamily = RetroFontFamily, fontSize = 9.sp) },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = Color.White,
+                        selectedTextColor = Color.White,
+                        unselectedIconColor = Color.Gray,
+                        unselectedTextColor = Color.Gray,
+                        indicatorColor = Color.White.copy(alpha = 0.1f)
+                    )
                 )
             }
         }
@@ -740,25 +799,26 @@ private fun LibraryTab(
     Column(
         Modifier
             .fillMaxSize()
-            .background(Color(0xFF1B1A16))
+            .background(Color.Black)
     ) {
         // ── Header row ────────────────────────────────────────────────
         Row(
             Modifier
                 .fillMaxWidth()
-                .background(Color(0xFF111110))
+                .background(RetroPanel)
                 .padding(horizontal = 12.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                "Library",
-                color = Color(0xFFD8C77A),
-                style = MaterialTheme.typography.titleMedium,
+                "LIBRARY",
+                color = RetroNeonCyan,
+                fontFamily = RetroFontFamily,
+                fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.weight(1f)
             )
-            Button(
+            RetroButton(
                 onClick = {
                     scope.launch(Dispatchers.IO) {
                         val results = AmigaUtils.fixDuneFilenames()
@@ -771,10 +831,10 @@ private fun LibraryTab(
                         }
                     }
                 },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF5D4037)),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-            ) { Text("Fix Amiga") }
-            Button(
+                text = "FIX",
+                color = Color(0xFF5D4037)
+            )
+            RetroButton(
                 onClick = {
                     scope.launch(Dispatchers.IO) {
                         val fresh = GameLibrary.clearAndRescan(context)
@@ -785,24 +845,14 @@ private fun LibraryTab(
                         }
                     }
                 },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A6A3A)),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-            ) { Text("Rescan") }
-            Button(
+                text = "SCAN",
+                color = Color(0xFF3A6A3A)
+            )
+            RetroButton(
                 onClick = { folderPicker.launch(null) },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A3A6A)),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-            ) { Text("+ Folder") }
-            Button(
-                onClick = { filePicker.launch(arrayOf(
-                    "application/octet-stream",
-                    "application/x-cue",
-                    "application/x-cd-image",
-                    "*/*"
-                )) },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A3A6A)),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-            ) { Text("+ .bin") }
+                text = "+ DIR",
+                color = Color(0xFF3A3A6A)
+            )
         }
 
         // ── Empty state ───────────────────────────────────────────────
@@ -812,15 +862,17 @@ private fun LibraryTab(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("🎮", style = MaterialTheme.typography.displayMedium)
+                    Text("🕹️", style = MaterialTheme.typography.displayMedium)
                     Text(
-                        "No games yet",
-                        color = Color(0xFFD8C77A),
+                        "NO GAMES FOUND",
+                        color = RetroNeonCyan,
+                        fontFamily = RetroFontFamily,
                         style = MaterialTheme.typography.titleMedium
                     )
                     Text(
-                        "Tap + Folder to add a DOS/Amiga game folder\nor + .bin to add a PS1 disc image",
-                        color = Color(0xFF93A17B),
+                        "INSERT MEDIA TO BEGIN",
+                        color = Color.Gray,
+                        fontFamily = RetroFontFamily,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                         style = MaterialTheme.typography.bodySmall
                     )
@@ -853,7 +905,7 @@ private fun LibraryTab(
                         ConsoleHeader(console)
                     }
                     items(consoleGames, key = { it.gameId.ifBlank { it.filePath } }) { game ->
-                        ModernGameCard(
+                        RetroGameCard(
                             game = game,
                             onLaunch = { onLaunch(game) },
                             onRemove = { games.remove(game) }
@@ -868,21 +920,23 @@ private fun LibraryTab(
 @Composable
 private fun ConsoleHeader(console: ConsoleType) {
     val (icon, color) = when (console) {
-        ConsoleType.PS1 -> "🎮" to Color(0xFFD8C77A) // Matching theme gold
-        ConsoleType.AMIGA -> "💾" to Color(0xFF93A17B) // Matching theme green
-        ConsoleType.DOSBOX -> "🖥️" to Color(0xFF6A6455) // Matching theme brown
-        ConsoleType.NINTENDO_DSI -> "🎴" to Color(0xFFD8C77A)
-        else -> "🕹️" to Color(0xFF93A17B)
+        ConsoleType.PS1 -> "🎮" to RetroNeonCyan
+        ConsoleType.AMIGA -> "💾" to RetroNeonMagenta
+        ConsoleType.DOSBOX -> "🖥️" to RetroNeonGreen
+        ConsoleType.NINTENDO_DSI -> "🎴" to RetroNeonCyan
+        else -> "🕹️" to Color.Gray
     }
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = color.copy(alpha = 0.15f),
-        shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color.Black.copy(alpha = 0.8f))
+            .padding(vertical = 8.dp)
     ) {
         Text(
-            text = "$icon  ${console.name.replace("_", " ").lowercase().replaceFirstChar { it.uppercase() }}",
-            modifier = Modifier.padding(12.dp),
-            style = MaterialTheme.typography.titleSmall,
+            text = "[ ${console.name.replace("_", " ")} ]",
+            modifier = Modifier.align(Alignment.CenterStart),
+            fontFamily = RetroFontFamily,
+            fontSize = 12.sp,
             fontWeight = FontWeight.Bold,
             color = color
         )
@@ -890,46 +944,38 @@ private fun ConsoleHeader(console: ConsoleType) {
 }
 
 @Composable
-private fun ModernGameCard(game: GameEntry, onLaunch: () -> Unit, onRemove: () -> Unit) {
-    val displayPath = game.filePath
-        .substringAfterLast('/')
-        .substringAfterLast('%')
-        .substringBefore('?')
-        .ifBlank { game.filePath }
-
+private fun RetroGameCard(game: GameEntry, onLaunch: () -> Unit, onRemove: () -> Unit) {
     var showDelete by remember { mutableStateOf(false) }
 
     if (showDelete) {
         AlertDialog(
             onDismissRequest = { showDelete = false },
             confirmButton = {
-                Button(onClick = {
+                RetroButton(onClick = {
                     onRemove()
                     showDelete = false
                 },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B2020))
-                ) { Text("Remove") }
+                text = "REMOVE",
+                color = Color(0xFF8B2020)
+                )
             },
-            dismissButton = { Button(onClick = { showDelete = false }) { Text("Cancel") } },
-            title = { Text("Remove ${game.name}?") },
-            text  = { Text("This only removes it from the list. Your file is not deleted.") }
+            dismissButton = { RetroButton(onClick = { showDelete = false }, text = "CANCEL", color = Color.Gray) },
+            title = { Text("REMOVE GAME?", fontFamily = RetroFontFamily, color = RetroNeonCyan) },
+            text  = { Text("Confirm deletion from library list.", fontFamily = RetroFontFamily, color = Color.White) },
+            containerColor = RetroPanel
         )
     }
 
-    Card(
+    RetroCard(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        shape = RoundedCornerShape(12.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = Color(0xFF2B2920)
-        )
+            .padding(vertical = 4.dp)
+            .clickable { onLaunch() }
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // Platform icon
@@ -942,34 +988,31 @@ private fun ModernGameCard(game: GameEntry, onLaunch: () -> Unit, onRemove: () -
             }
             Text(
                 text = icon,
-                style = MaterialTheme.typography.headlineSmall,
+                fontSize = 24.sp,
                 modifier = Modifier.padding(end = 12.dp)
             )
 
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = game.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color(0xFFE6DCA3),
-                    fontWeight = FontWeight.SemiBold
+                    text = game.name.uppercase(),
+                    color = Color.White,
+                    fontFamily = RetroFontFamily,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = displayPath,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color(0xFF93A17B),
-                    maxLines = 1,
-                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    text = game.consoleType.name,
+                    color = RetroNeonCyan.copy(alpha = 0.7f),
+                    fontFamily = RetroFontFamily,
+                    fontSize = 10.sp
                 )
             }
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onLaunch) {
-                    Icon(Icons.Filled.SportsEsports, contentDescription = "Play", tint = Color(0xFFD8C77A))
-                }
-                IconButton(onClick = { showDelete = true }) {
-                    Icon(Icons.Filled.Delete, contentDescription = "Remove", tint = Color(0xFF8B5050))
-                }
-            }
+            RetroButton(
+                onClick = { showDelete = true },
+                text = "X",
+                color = Color(0xFF444444)
+            )
         }
     }
 }
@@ -1089,28 +1132,29 @@ private fun BiosTab() {
     Column(
         Modifier
             .fillMaxSize()
-            .background(Color(0xFF1B1A16))
+            .background(Color.Black)
     ) {
         // Header
         Box(
             Modifier
                 .fillMaxWidth()
-                .background(Color(0xFF111110))
+                .background(RetroPanel)
                 .padding(horizontal = 12.dp, vertical = 10.dp)
         ) {
             Text(
-                "BIOS Files",
-                color = Color(0xFFD8C77A),
-                style = MaterialTheme.typography.titleMedium,
+                "SYSTEM BIOS",
+                color = RetroNeonMagenta,
+                fontFamily = RetroFontFamily,
+                fontSize = 18.sp,
                 fontWeight = FontWeight.Bold
             )
         }
 
         Text(
-            "BIOS files are required for each console. Tap Load to install a BIOS file " +
-            "from your phone's storage.",
-            color = Color(0xFF93A17B),
-            style = MaterialTheme.typography.bodySmall,
+            "CRITICAL SYSTEM FILES DETECTED BELOW. ENSURE ALL FIRMWARE IS INSTALLED FOR OPTIMAL EMULATION.",
+            color = RetroNeonMagenta.copy(alpha = 0.7f),
+            fontFamily = RetroFontFamily,
+            fontSize = 10.sp,
             modifier = Modifier.padding(12.dp)
         )
 
@@ -1123,58 +1167,61 @@ private fun BiosTab() {
             grouped.forEach { (consoleName, entries) ->
                 item {
                     Text(
-                        consoleName,
-                        color = Color(0xFFD8C77A),
-                        style = MaterialTheme.typography.labelLarge,
+                        "[ ${consoleName.uppercase()} ]",
+                        color = Color.White,
+                        fontFamily = RetroFontFamily,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(vertical = 4.dp)
                     )
                 }
                 items(entries) { bios ->
                     val exists = existsMap[bios.destPath] == true
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFF2B2920)),
-                        shape  = RoundedCornerShape(10.dp),
+                    RetroCard(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
-                            Modifier.padding(12.dp),
+                            Modifier.padding(8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             // Status dot
                             Text(
-                                if (exists) "✅" else "❌",
-                                style = MaterialTheme.typography.bodyLarge,
+                                if (exists) "⚡" else "○",
+                                color = if (exists) RetroNeonGreen else Color.Red,
+                                fontFamily = RetroFontFamily,
+                                fontSize = 16.sp,
                                 modifier = Modifier.padding(end = 10.dp)
                             )
                             Column(Modifier.weight(1f)) {
-                                Text(bios.filename,
-                                    color = if (exists) Color(0xFF8BC87A) else Color(0xFFE6DCA3),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.SemiBold)
-                                Text(bios.notes,
-                                    color = Color(0xFF6A6455),
-                                    style = MaterialTheme.typography.labelSmall)
+                                Text(bios.filename.uppercase(),
+                                    color = if (exists) RetroNeonGreen else Color.Gray,
+                                    fontFamily = RetroFontFamily,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold)
+                                Text(bios.notes.uppercase(),
+                                    color = Color.Gray,
+                                    fontFamily = RetroFontFamily,
+                                    fontSize = 9.sp)
                                 if (exists) {
-                                    Text("Installed ✓",
-                                        color = Color(0xFF5A9A4A),
-                                        style = MaterialTheme.typography.labelSmall)
+                                    Text("FIRMWARE OK",
+                                        color = RetroNeonGreen,
+                                        fontFamily = RetroFontFamily,
+                                        fontSize = 8.sp)
                                 } else {
-                                    Text("Not found — tap Load to install",
-                                        color = Color(0xFF9A5A4A),
-                                        style = MaterialTheme.typography.labelSmall)
+                                    Text("MISSING CORE",
+                                        color = Color.Red,
+                                        fontFamily = RetroFontFamily,
+                                        fontSize = 8.sp)
                                 }
                             }
-                            Button(
+                            RetroButton(
                                 onClick = {
                                     pendingBios = bios
                                     biosPicker.launch(arrayOf("*/*"))
                                 },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = if (exists) Color(0xFF3A5A3A) else Color(0xFF5A3A6A)
-                                ),
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
-                            ) { Text(if (exists) "Replace" else "Load") }
+                                text = if (exists) "FIX" else "LOAD",
+                                color = if (exists) Color(0xFF3A5A3A) else RetroNeonMagenta
+                            )
                         }
                     }
                 }
@@ -1196,18 +1243,19 @@ private fun SettingsTab(
     Column(
         Modifier
             .fillMaxSize()
-            .background(Color(0xFF1B1A16))
+            .background(Color.Black)
     ) {
         Box(
             Modifier
                 .fillMaxWidth()
-                .background(Color(0xFF111110))
+                .background(RetroPanel)
                 .padding(horizontal = 12.dp, vertical = 10.dp)
         ) {
             Text(
-                "Settings",
-                color = Color(0xFFD8C77A),
-                style = MaterialTheme.typography.titleMedium,
+                "SYSTEM SETUP",
+                color = Color.White,
+                fontFamily = RetroFontFamily,
+                fontSize = 18.sp,
                 fontWeight = FontWeight.Bold
             )
         }
@@ -1218,53 +1266,67 @@ private fun SettingsTab(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Inline settings sliders (no separate screen needed)
             var s by remember { mutableStateOf(settings) }
 
-            SettingRow("Display Scaling", "%.2f".format(s.displayScale)) {
+            SettingRow("VIDEO SCALE", "%.2f".format(s.displayScale)) {
                 Slider(
                     value = s.displayScale,
                     onValueChange = { s = s.copy(displayScale = it); onSettings() },
-                    valueRange = 0.5f..1.5f
+                    valueRange = 0.5f..1.5f,
+                    colors = SliderDefaults.colors(
+                        thumbColor = RetroNeonCyan,
+                        activeTrackColor = RetroNeonCyan,
+                        inactiveTrackColor = Color.DarkGray
+                    )
                 )
             }
-            SettingRow("Control Sensitivity", "%.2f".format(s.sensitivity)) {
+            SettingRow("CORE INPUT SENSE", "%.2f".format(s.sensitivity)) {
                 Slider(
                     value = s.sensitivity,
                     onValueChange = { s = s.copy(sensitivity = it) },
-                    valueRange = 0.5f..2f
+                    valueRange = 0.5f..2f,
+                    colors = SliderDefaults.colors(
+                        thumbColor = RetroNeonMagenta,
+                        activeTrackColor = RetroNeonMagenta,
+                        inactiveTrackColor = Color.DarkGray
+                    )
                 )
             }
-            SettingRow("Audio Volume", "${"%.0f".format(s.volume * 100)}%") {
+            SettingRow("MASTER VOLUME", "${"%.0f".format(s.volume * 100)}%") {
                 Slider(
                     value = s.volume,
                     onValueChange = { s = s.copy(volume = it) },
-                    valueRange = 0f..1f
+                    valueRange = 0f..1f,
+                    colors = SliderDefaults.colors(
+                        thumbColor = RetroNeonGreen,
+                        activeTrackColor = RetroNeonGreen,
+                        inactiveTrackColor = Color.DarkGray
+                    )
                 )
             }
 
-            HorizontalDivider(color = Color(0xFF3A3A3A))
+            HorizontalDivider(color = Color.DarkGray)
 
-            Button(
+            RetroButton(
                 onClick = onAbout,
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2B2920)),
+                text = "SYSTEM INFO",
+                color = Color(0xFF2B2920),
                 modifier = Modifier.fillMaxWidth()
-            ) { Text("About RetroRTS") }
+            )
 
-            // Storage paths info card
-            Card(
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF222018)),
-                shape  = RoundedCornerShape(10.dp)
+            RetroCard(
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("File Locations", color = Color(0xFFD8C77A),
-                        style = MaterialTheme.typography.labelLarge,
+                Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("STORAGE MAP", color = RetroNeonCyan,
+                        fontFamily = RetroFontFamily,
+                        fontSize = 10.sp,
                         fontWeight = FontWeight.Bold)
-                    StoragePath("Games",  "/sdcard/RetroRTS/Games/")
-                    StoragePath("PS1 BIOS", "/sdcard/RetroRTS/system/ps1/")
-                    StoragePath("DSi BIOS", "/sdcard/RetroRTS/system/dsi/")
-                    StoragePath("Amiga BIOS", "/sdcard/RetroRTS/system/amiga/")
-                    StoragePath("Saves",   "/sdcard/RetroRTS/saves/")
+                    StoragePath("GAMES",  "/sdcard/RetroRTS/Games/")
+                    StoragePath("PS1_FW", "/sdcard/RetroRTS/system/ps1/")
+                    StoragePath("DSi_FW", "/sdcard/RetroRTS/system/dsi/")
+                    StoragePath("AMIGA_FW", "/sdcard/RetroRTS/system/amiga/")
+                    StoragePath("SAVES",   "/sdcard/RetroRTS/saves/")
                 }
             }
         }
@@ -1275,8 +1337,8 @@ private fun SettingsTab(
 private fun SettingRow(label: String, value: String, content: @Composable () -> Unit) {
     Column {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(label, color = Color.White, style = MaterialTheme.typography.bodyMedium)
-            Text(value, color = Color(0xFF93A17B), style = MaterialTheme.typography.bodyMedium)
+            Text(label, color = Color.White, fontFamily = RetroFontFamily, fontSize = 10.sp)
+            Text(value, color = RetroNeonCyan, fontFamily = RetroFontFamily, fontSize = 10.sp)
         }
         content()
     }
@@ -1285,14 +1347,15 @@ private fun SettingRow(label: String, value: String, content: @Composable () -> 
 @Composable
 private fun StoragePath(label: String, path: String) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(label, color = Color(0xFF93A17B),
-            style = MaterialTheme.typography.labelSmall,
+        Text(label, color = Color.Gray,
+            fontFamily = RetroFontFamily,
+            fontSize = 8.sp,
             modifier = Modifier.weight(0.35f))
-        Text(path, color = Color(0xFF6A6455),
-            style = MaterialTheme.typography.labelSmall,
+        Text(path, color = Color.LightGray,
+            fontFamily = RetroFontFamily,
+            fontSize = 8.sp,
             modifier = Modifier.weight(0.65f),
-            maxLines = 1,
-            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            textAlign = TextAlign.End)
     }
 }
 
@@ -1308,20 +1371,11 @@ private fun DosboxPlayScreen(game: GameEntry, settings: SettingsState, onExit: (
     var currentMask by remember { mutableStateOf(0) }
     val mouseButtonsState = remember { mutableStateOf(0) }
     var currentMouseButtons by mouseButtonsState
-    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     
     val profile = remember(game.name) { GameProfileStore.loadByGameName(game.name) }
 
-    fun updateBits(bits: List<Int>, down: Boolean) {
-        var newMask = currentMask
-        bits.forEach { bit ->
-            newMask = if (down) newMask or (1 shl bit) else newMask and (1 shl bit).inv()
-        }
-        if (newMask != currentMask) {
-            currentMask = newMask
-        }
-    }
+
 
     // Live perf stats — poll every second
     var fps by remember { mutableStateOf(0f) }
@@ -1339,19 +1393,16 @@ private fun DosboxPlayScreen(game: GameEntry, settings: SettingsState, onExit: (
 
     // Auto-detect high refresh rate
     LaunchedEffect(Unit) {
+        // Apply stable audio settings
+        DosboxBridge.setFrameCap(60)
+        DosboxBridge.setVolume(settings.volume)
+
         if (game.consoleType == ConsoleType.AMIGA) {
             delay(500) // let the core finish registering its disk control interface
             numDisks = NativeEmulatorBridge.getNumDisks()
             currentDisk = NativeEmulatorBridge.getCurrentDiskIndex()
         }
         
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val maxRefresh = context.display?.supportedModes?.maxByOrNull { it.refreshRate }?.refreshRate ?: 60f
-            if (maxRefresh > 60f) {
-                DosboxBridge.setFrameCap(maxRefresh.toInt())
-            }
-        }
-
         while (true) {
             delay(1000L) // Polling interval
             val stats = DosboxBridge.getPerfStats()
@@ -1365,9 +1416,11 @@ private fun DosboxPlayScreen(game: GameEntry, settings: SettingsState, onExit: (
     if (showExitDialog) {
         AlertDialog(
             onDismissRequest = { showExitDialog = false },
-            confirmButton    = { Button({ onExit() }) { Text("Exit") } },
-            dismissButton    = { Button({ showExitDialog = false }) { Text("Cancel") } },
-            text             = { Text("Exit game session? Unsaved progress will be lost.") }
+            confirmButton    = { RetroButton(onClick = { onExit() }, text = "EXIT") },
+            dismissButton    = { RetroButton(onClick = { showExitDialog = false }, text = "STAY", color = Color.Gray) },
+            title            = { Text("TERMINATE SESSION?", fontFamily = RetroFontFamily, color = Color.Red) },
+            text             = { Text("UNSAVED MEMORY WILL BE PURGED.", fontFamily = RetroFontFamily, fontSize = 10.sp, color = Color.White) },
+            containerColor = RetroPanel
         )
     }
 
@@ -1375,26 +1428,34 @@ private fun DosboxPlayScreen(game: GameEntry, settings: SettingsState, onExit: (
         AlertDialog(
             onDismissRequest = { showKeyboardDialog = false },
             confirmButton = {
-                Button({
+                RetroButton(onClick = {
                     android.util.Log.i("RetroRTS", "Sending keyboard text: $keyboardText")
                     NativeEmulatorBridge.sendKeyString(keyboardText + "\n")
                     keyboardText = ""
                     showKeyboardDialog = false
-                }) { Text("Send") }
+                }, text = "SEND", color = RetroNeonGreen)
             },
             dismissButton = {
-                Button({ showKeyboardDialog = false }) { Text("Cancel") }
+                RetroButton(onClick = { showKeyboardDialog = false }, text = "CANCEL", color = Color.Gray)
             },
-            title = { Text("Virtual Keyboard") },
+            title = { Text("INPUT INTERFACE", fontFamily = RetroFontFamily, color = RetroNeonCyan) },
             text = {
                 TextField(
                     value = keyboardText,
                     onValueChange = { keyboardText = it },
-                    placeholder = { Text("Type command...") },
+                    placeholder = { Text("COMMAND...", fontFamily = RetroFontFamily, fontSize = 10.sp) },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    textStyle = TextStyle(fontFamily = RetroFontFamily, fontSize = 12.sp, color = Color.White),
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = Color.Black,
+                        unfocusedContainerColor = Color.Black,
+                        cursorColor = RetroNeonCyan,
+                        focusedIndicatorColor = RetroNeonCyan
+                    )
                 )
-            }
+            },
+            containerColor = RetroPanel
         )
     }
 
@@ -1407,24 +1468,35 @@ private fun DosboxPlayScreen(game: GameEntry, settings: SettingsState, onExit: (
                 SurfaceView(ctx).apply {
                     var lastX = 0f
                     var lastY = 0f
+                    var accX = 0f
+                    var accY = 0f
+                    
                     setOnTouchListener { _, event ->
                         when (event.actionMasked) {
                             MotionEvent.ACTION_DOWN -> {
                                 lastX = event.x
                                 lastY = event.y
+                                accX = 0f
+                                accY = 0f
                                 NativeEmulatorBridge.updateMouse(mouseButtonsState.value, 0, 0)
                             }
                             MotionEvent.ACTION_MOVE -> {
-                                val dx = event.x - lastX
-                                val dy = event.y - lastY
-                                val idx = dx.toInt()
-                                val idy = dy.toInt()
+                                val dx = (event.x - lastX) * 3.0f // Increased sensitivity multiplier
+                                val dy = (event.y - lastY) * 3.0f
+                                
+                                accX += dx
+                                accY += dy
+                                
+                                val idx = accX.toInt()
+                                val idy = accY.toInt()
+                                
                                 if (idx != 0 || idy != 0) {
-                                    // Scale movement for better sensitivity on high-res screens
-                                    NativeEmulatorBridge.updateMouse(mouseButtonsState.value, idx * 2, idy * 2)
-                                    lastX += idx
-                                    lastY += idy
+                                    NativeEmulatorBridge.updateMouse(mouseButtonsState.value, idx, idy)
+                                    accX -= idx
+                                    accY -= idy
                                 }
+                                lastX = event.x
+                                lastY = event.y
                             }
                             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                                 NativeEmulatorBridge.updateMouse(mouseButtonsState.value, 0, 0)
@@ -1460,9 +1532,16 @@ private fun DosboxPlayScreen(game: GameEntry, settings: SettingsState, onExit: (
             ) {
                 Column {
                     Text(
-                        "${"%.0f".format(fps)} fps  •  ${"%.0f".format(cpuPct)}% cpu",
-                        color = Color(0xAAD8C77A),
-                        style = MaterialTheme.typography.labelSmall
+                        "SYS_REFRESH: ${"%.0f".format(fps)}hz",
+                        color = RetroNeonGreen.copy(alpha = 0.6f),
+                        fontFamily = RetroFontFamily,
+                        fontSize = 8.sp
+                    )
+                    Text(
+                        "CPU_LOAD: ${"%.0f".format(cpuPct)}%",
+                        color = RetroNeonCyan.copy(alpha = 0.6f),
+                        fontFamily = RetroFontFamily,
+                        fontSize = 8.sp
                     )
                 }
                 
@@ -1470,9 +1549,7 @@ private fun DosboxPlayScreen(game: GameEntry, settings: SettingsState, onExit: (
                     // Utility buttons
                     IconButton(
                         onClick = {
-                            // Send keyboard skip key
                             NativeEmulatorBridge.sendKeyString(profile.skipKey)
-                            // Also pulse joystick fire for compatibility
                             scope.launch {
                                 NativeEmulatorBridge.updateInput(0, currentMask or (1 shl RETRO_DEVICE_ID_JOYPAD_B))
                                 NativeEmulatorBridge.updateInput(1, currentMask or (1 shl RETRO_DEVICE_ID_JOYPAD_B))
@@ -1481,35 +1558,32 @@ private fun DosboxPlayScreen(game: GameEntry, settings: SettingsState, onExit: (
                                 NativeEmulatorBridge.updateInput(1, currentMask)
                             }
                         },
-                        modifier = Modifier.background(Color(0x44D8C77A), CircleShape).size(40.dp)
+                        modifier = Modifier
+                            .background(RetroPanel, RoundedCornerShape(2.dp))
+                            .border(1.dp, RetroNeonCyan.copy(alpha = 0.5f), RoundedCornerShape(2.dp))
+                            .size(36.dp)
                     ) {
-                        Icon(Icons.Filled.SkipNext, contentDescription = "Skip", tint = Color.Black)
+                        Icon(Icons.Filled.SkipNext, contentDescription = "Skip", tint = RetroNeonCyan, modifier = Modifier.size(20.dp))
                     }
-
-                    GamepadButton(
-                        modifier = Modifier.size(40.dp),
-                        label = "L",
-                        color = Color(0x44FFFFFF)
-                    ) { updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_B), it) }
-                    
-                    GamepadButton(
-                        modifier = Modifier.size(40.dp),
-                        label = "R",
-                        color = Color(0x44FFFFFF)
-                    ) { updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_R), it) }
 
                     IconButton(
                         onClick = { showKeyboardDialog = true },
-                        modifier = Modifier.background(Color(0x44FFFFFF), CircleShape).size(40.dp)
+                        modifier = Modifier
+                            .background(RetroPanel, RoundedCornerShape(2.dp))
+                            .border(1.dp, Color.Gray.copy(alpha = 0.5f), RoundedCornerShape(2.dp))
+                            .size(36.dp)
                     ) {
-                        Icon(Icons.Filled.Keyboard, contentDescription = "Keyboard", tint = Color.White)
+                        Icon(Icons.Filled.Keyboard, contentDescription = "Keyboard", tint = Color.White, modifier = Modifier.size(20.dp))
                     }
                     
                     IconButton(
                         onClick = { showExitDialog = true },
-                        modifier = Modifier.background(Color(0x448B2020), CircleShape).size(40.dp)
+                        modifier = Modifier
+                            .background(Color(0xFF441111), RoundedCornerShape(2.dp))
+                            .border(1.dp, Color.Red.copy(alpha = 0.5f), RoundedCornerShape(2.dp))
+                            .size(36.dp)
                     ) {
-                        Text("✕", color = Color.White, fontWeight = FontWeight.Bold)
+                        Text("X", color = Color.White, fontFamily = RetroFontFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                     }
                 }
             }
@@ -1556,12 +1630,21 @@ private fun DosboxPlayScreen(game: GameEntry, settings: SettingsState, onExit: (
                         }
                     },
                     onAnalogMove = { x, y ->
-                        // Analog X/Y range -32768 to 32767
                         val sensitivity = settings.sensitivity
-                        val valX = (x * 32767f * sensitivity).toInt().coerceIn(-32768, 32767)
-                        val valY = (y * 32767f * sensitivity).toInt().coerceIn(-32768, 32767)
-                        NativeEmulatorBridge.updateAnalog(0, 0, 0, valX) // port 0, Left stick, X
-                        NativeEmulatorBridge.updateAnalog(0, 0, 1, valY) // port 0, Left stick, Y
+                        if (game.consoleType == ConsoleType.DOSBOX) {
+                            // Translate stick movement to mouse relative movement
+                            val dx = (x * 20f * sensitivity).toInt()
+                            val dy = (y * 20f * sensitivity).toInt()
+                            if (dx != 0 || dy != 0) {
+                                NativeEmulatorBridge.updateMouse(mouseButtonsState.value, dx, dy)
+                            }
+                        } else {
+                            // Analog X/Y range -32768 to 32767
+                            val valX = (x * 32767f * sensitivity).toInt().coerceIn(-32768, 32767)
+                            val valY = (y * 32767f * sensitivity).toInt().coerceIn(-32768, 32767)
+                            NativeEmulatorBridge.updateAnalog(0, 0, 0, valX) // port 0, Left stick, X
+                            NativeEmulatorBridge.updateAnalog(0, 0, 1, valY) // port 0, Left stick, Y
+                        }
                     }
                 )
             }
@@ -1580,8 +1663,8 @@ private fun AnalogStick(
     Box(
         modifier = modifier
             .size(140.dp)
-            .background(Color(0x33FFFFFF), CircleShape)
-            .border(2.dp, Color(0x66FFFFFF), CircleShape)
+            .background(Color(0x1100F0FF), CircleShape)
+            .border(2.dp, RetroNeonCyan.copy(alpha = 0.3f), CircleShape)
             .pointerInput(Unit) {
                 awaitPointerEventScope {
                     while (true) {
@@ -1614,8 +1697,8 @@ private fun AnalogStick(
             Modifier
                 .offset { IntOffset(stickOffset.x.toInt(), stickOffset.y.toInt()) }
                 .size(60.dp)
-                .background(Color(0xAAFFFFFF), CircleShape)
-                .border(2.dp, Color.White, CircleShape)
+                .background(RetroNeonCyan.copy(alpha = 0.6f), CircleShape)
+                .border(2.dp, Color.White.copy(alpha = 0.5f), CircleShape)
         )
     }
 }
@@ -1648,39 +1731,37 @@ private fun VirtualGamepad(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // ── Left Side: D-Pad or Analog Stick ───────────────────────────
-        if (consoleType == ConsoleType.AMIGA) {
+        // ── Left Side: Analog or D-Pad ───────────────────────────
+        if (consoleType == ConsoleType.AMIGA || consoleType == ConsoleType.DOSBOX) {
             AnalogStick(onMove = onAnalogMove)
         } else {
             Box(Modifier.size(160.dp)) {
-                Box(Modifier.fillMaxSize().background(Color(0x33FFFFFF), CircleShape).border(2.dp, Color(0x66FFFFFF), CircleShape))
-                GamepadButton(Modifier.align(Alignment.TopCenter), "▲") { updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_DOWN), it) }
-                GamepadButton(Modifier.align(Alignment.BottomCenter), "▼") { updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_UP), it) }
-                GamepadButton(Modifier.align(Alignment.CenterStart), "◀") { updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_LEFT), it) }
-                GamepadButton(Modifier.align(Alignment.CenterEnd), "▶") { updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_RIGHT), it) }
+                Box(Modifier.fillMaxSize().background(Color(0x1100F0FF), CircleShape).border(2.dp, RetroNeonCyan.copy(alpha = 0.3f), CircleShape))
+                GamepadButton(Modifier.align(Alignment.TopCenter), "U") { updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_UP), it) }
+                GamepadButton(Modifier.align(Alignment.BottomCenter), "D") { updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_DOWN), it) }
+                GamepadButton(Modifier.align(Alignment.CenterStart), "L") { updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_LEFT), it) }
+                GamepadButton(Modifier.align(Alignment.CenterEnd), "R") { updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_RIGHT), it) }
             }
         }
 
         // ── Right Side: Action Buttons ────────────────────────────────
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            // FIRE -> Left Mouse Click (1)
-            GamepadButton(Modifier.size(80.dp), "FIRE", Color(0xFF8B2020)) { 
+            GamepadButton(Modifier.size(80.dp), "FIRE", RetroNeonMagenta) { 
                 onMouseClick(1, it)
+                updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_B), it)
             }
-            // 2 -> Right Mouse Click (2)
-            GamepadButton(Modifier.size(80.dp), "2", Color(0xFF3A3A6A)) { 
+            GamepadButton(Modifier.size(80.dp), "ALT", RetroNeonGreen) { 
                 onMouseClick(2, it)
             }
             
-            // For Amiga, add a D-Pad overlay for Wheel / Keyboard Arrows
             if (consoleType == ConsoleType.AMIGA) {
                 Box(Modifier.size(100.dp)) {
-                     GamepadButton(Modifier.align(Alignment.TopCenter).size(40.dp), "W▲") { onMouseClick(1 shl RETRO_DEVICE_ID_MOUSE_WHEELUP, it) }
-                     GamepadButton(Modifier.align(Alignment.BottomCenter).size(40.dp), "W▼") { onMouseClick(1 shl RETRO_DEVICE_ID_MOUSE_WHEELDOWN, it) }
+                     GamepadButton(Modifier.align(Alignment.TopCenter).size(40.dp), "WU") { onMouseClick(1 shl RETRO_DEVICE_ID_MOUSE_WHEELUP, it) }
+                     GamepadButton(Modifier.align(Alignment.BottomCenter).size(40.dp), "WD") { onMouseClick(1 shl RETRO_DEVICE_ID_MOUSE_WHEELDOWN, it) }
                 }
             }
 
-            GamepadButton(Modifier.size(60.dp), "START", Color(0xFF444444)) { updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_START), it) }
+            GamepadButton(Modifier.size(60.dp), "RUN", Color.DarkGray) { updateBits(listOf(RETRO_DEVICE_ID_JOYPAD_START), it) }
         }
     }
 }
@@ -1695,7 +1776,7 @@ private fun GamepadButton(
     var isPressed by remember { mutableStateOf(false) }
     
     Surface(
-        color = if (isPressed) color.copy(alpha = 1f) else color,
+        color = if (isPressed) color.copy(alpha = 1f) else color.copy(alpha = 0.3f),
         shape = CircleShape,
         modifier = modifier
             .size(60.dp)
@@ -1712,12 +1793,19 @@ private fun GamepadButton(
                     }
                 }
             }
-            .then(if (isPressed) Modifier.scale(0.9f) else Modifier)
+            .then(if (isPressed) Modifier.scale(0.9f) else Modifier),
+        border = BorderStroke(2.dp, if (isPressed) Color.White else color.copy(alpha = 0.5f))
     ) {
         Box(contentAlignment = Alignment.Center) {
-            Text(label, color = Color.White, fontWeight = FontWeight.Bold)
+            Text(
+                text = label, 
+                color = if (isPressed) Color.Black else Color.White, 
+                fontFamily = RetroFontFamily,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold
+            )
         }
     }
 }
 
-@Composable private fun RetroRtsTheme(content: @Composable () -> Unit) { MaterialTheme(content = content) }
+

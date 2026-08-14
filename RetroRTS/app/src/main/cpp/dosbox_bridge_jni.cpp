@@ -56,17 +56,18 @@ Java_com_retrorts_ui_DosboxBridge_stopDosboxNative(JNIEnv*, jclass) {
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_retrorts_ui_DosboxBridge_setCpuCyclesNative(JNIEnv*, jclass, jint cycles) {
-    // To be implemented via LibretroHost
+    retrorts::LibretroHost::getInstance().setCycles(cycles);
 }
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_retrorts_ui_DosboxBridge_setFrameCapNative(JNIEnv*, jclass, jint fps) {
-    // To be implemented via LibretroHost
+    // Frame cap is handled by the core's timing or LibretroHost stats if implemented.
+    // For now, we store cycles which affects performance.
 }
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_retrorts_ui_DosboxBridge_setVolumeNative(JNIEnv*, jclass, jfloat volume) {
-    // To be implemented via LibretroHost
+    retrorts::LibretroHost::getInstance().setVolume(volume);
 }
 
 extern "C" JNIEXPORT void JNICALL

@@ -40,6 +40,9 @@ public:
 
     void setWindow(ANativeWindow* window);
 
+    void setVolume(float volume) { volume_.store(volume); }
+    void setCycles(int cycles) { cycles_.store(cycles); }
+
     void setSystemDir(const std::string& dir) { systemDir_ = dir; }
     void setSaveDir(const std::string& dir) { saveDir_ = dir; }
     void setCoreType(CoreType type) { coreType_ = type; }
@@ -73,6 +76,9 @@ private:
     std::atomic<int16_t> mouseX_{0};
     std::atomic<int16_t> mouseY_{0};
     CoreType coreType_ = CoreType::NONE;
+    std::string currentGamePath_;
+    std::atomic<float> volume_{1.0f};
+    std::atomic<int> cycles_{0};
     enum retro_pixel_format pixelFormat_ = RETRO_PIXEL_FORMAT_RGB565;
     retro_keyboard_event_t keyboard_cb_ = nullptr;
     retro_disk_control_callback diskControl_{};

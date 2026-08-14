@@ -197,6 +197,10 @@ int LibretroHost::loadCore(const std::string& corePath) {
             LOGI("Amiga: port 0 = MOUSE, port 1 = JOYPAD");
             retro_set_controller_port_device_fn(0, RETRO_DEVICE_MOUSE);
             retro_set_controller_port_device_fn(1, RETRO_DEVICE_JOYPAD);
+        } else if (coreType_ == CoreType::DOSBOX) {
+            LOGI("DOSBox: port 0 = MOUSE, port 1 = JOYPAD");
+            retro_set_controller_port_device_fn(0, RETRO_DEVICE_MOUSE);
+            retro_set_controller_port_device_fn(1, RETRO_DEVICE_JOYPAD);
         } else {
             LOGI("Setting controller port devices to RETRO_DEVICE_JOYPAD");
             retro_set_controller_port_device_fn(0, RETRO_DEVICE_JOYPAD);
@@ -322,6 +326,7 @@ int LibretroHost::loadGame(const std::string& romPath) {
     if (!coreLib_ || !retro_load_game_fn) return -1;
 
     struct retro_game_info game = {romPath.c_str(), nullptr, 0, nullptr};
+    currentGamePath_ = romPath;
     if (!retro_load_game_fn(&game)) {
         LOGE("Failed to load game: %s", romPath.c_str());
         return -2;
@@ -544,6 +549,38 @@ bool LibretroHost::envCallback(unsigned cmd, void* data) {
                     var->value = "100";
                     return true;
                 }
+            } else if (host.coreType_ == CoreType::DOSBOX) {
+                bool isDune = host.currentGamePath_.find("dune") != std::string::npos ||
+                              host.currentGamePath_.find("DUNE") != std::string::npos;
+
+                if (key == "dosbox_pure_cycles") {
+                    if (isDune) {
+                        var->value = "386dx_33";
+                        return true;
+                    }
+                    var->value = "auto";
+                    return true;
+                }
+                if (key == "dosbox_pure_memory_size") {
+                    if (isDune) {
+                        var->value = "4";
+                        return true;
+                    }
+                    var->value = "16";
+                    return true;
+                }
+                if (key == "dosbox_pure_svga") {
+                    var->value = "svga_s3";
+                    return true;
+                }
+                if (key == "dosbox_pure_sblaster_type") {
+                    if (isDune) {
+                        var->value = "sbpro2";
+                        return true;
+                    }
+                    var->value = "sb16";
+                    return true;
+                }
             }
             // For other variables, return false so the core uses defaults
             return false;
@@ -680,6 +717,24 @@ size_t LibretroHost::audioBatchCallback(const int16_t* data, size_t frames) {
         return 0;
     }
 
+    float vol = host.volume_.load();
+    if (vol < 0.99f) {
+        static std::vector<int16_t> volBuffer;
+        size_t samples = frames * 2;
+        if (volBuffer.size() < samples) volBuffer.resize(samples);
+
+        for (size_t i = 0; i < samples; i++) {
+            volBuffer[i] = static_cast<int16_t>(static_cast<float>(data[i]) * vol);
+        }
+
+        aaudio_result_t result = AAudioStream_write(host.audioStream_, volBuffer.data(), (int32_t)frames, 100000000);
+        if (result >= 0) return (size_t)result;
+        if (result == AAUDIO_ERROR_TIMEOUT) return 0;
+        LOGE("AAudio write error: %s", AAudio_convertResultToText(result));
+        host.initAudio(host.lastSampleRate_);
+        return 0;
+    }
+
     // Blocking write to maintain sync with core.
     // Libretro cores generally expect the audio callback to block when the buffer is full.
     aaudio_result_t result = AAudioStream_write(host.audioStream_, data, (int32_t)frames, 100000000); // 100ms
@@ -713,11 +768,20 @@ int16_t LibretroHost::inputStateCallback(unsigned port, unsigned device, unsigne
     }
 
     if (device == RETRO_DEVICE_MOUSE) {
-        if (host.coreType_ == CoreType::AMIGA && port == 0) {
-            uint16_t pad = host.padState_[0].load();
+        if ((host.coreType_ == CoreType::AMIGA || host.coreType_ == CoreType::DOSBOX) && port == 0) {
+            // Amiga/DOSBox port 0 = MOUSE, port 1 = JOYPAD.
+            // The on-screen virtual controller typically feeds port 1, so we
+            // aggregate both ports so D-pad / face buttons / L / R all drive
+            // the mouse when an Amiga/DOSBox game is running.
+            uint16_t pad0 = host.padState_[0].load();
+            uint16_t pad1 = host.padState_[1].load();
+            uint16_t pad  = pad0 | pad1;
+
             switch (id) {
                 case RETRO_DEVICE_ID_MOUSE_X: {
-                    int16_t stickX = host.analogState_[0][0][0].load();
+                    int16_t stickX0 = host.analogState_[0][0][0].load();
+                    int16_t stickX1 = host.analogState_[1][0][0].load();
+                    int16_t stickX  = (stickX0 != 0) ? stickX0 : stickX1;
                     int16_t stickDelta = (stickX != 0) ? (stickX / 900) : 0;
                     int16_t dpadDelta = 0;
                     if (pad & (1U << 7)) dpadDelta += 8; // Right
@@ -725,7 +789,9 @@ int16_t LibretroHost::inputStateCallback(unsigned port, unsigned device, unsigne
                     return stickDelta + dpadDelta + host.mouseX_.exchange(0);
                 }
                 case RETRO_DEVICE_ID_MOUSE_Y: {
-                    int16_t stickY = host.analogState_[0][0][1].load();
+                    int16_t stickY0 = host.analogState_[0][0][1].load();
+                    int16_t stickY1 = host.analogState_[1][0][1].load();
+                    int16_t stickY  = (stickY0 != 0) ? stickY0 : stickY1;
                     int16_t stickDelta = (stickY != 0) ? (stickY / 900) : 0;
                     int16_t dpadDelta = 0;
                     if (pad & (1U << 5)) dpadDelta += 8; // Down
