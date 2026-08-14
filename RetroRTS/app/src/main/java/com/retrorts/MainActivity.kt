@@ -1383,12 +1383,20 @@ private fun DosboxPlayScreen(game: GameEntry, settings: SettingsState, onExit: (
     
     // Update input whenever mask or mouse buttons change
     LaunchedEffect(currentMask) {
-        NativeEmulatorBridge.updateInput(0, currentMask)
-        NativeEmulatorBridge.updateInput(1, currentMask)
+        if (game.consoleType == ConsoleType.DOSBOX) {
+            DosboxBridge.updateInput(1, currentMask)
+        } else {
+            NativeEmulatorBridge.updateInput(0, currentMask)
+            NativeEmulatorBridge.updateInput(1, currentMask)
+        }
     }
 
     LaunchedEffect(currentMouseButtons) {
-        NativeEmulatorBridge.updateMouse(currentMouseButtons, 0, 0)
+        if (game.consoleType == ConsoleType.DOSBOX) {
+            DosboxBridge.updateMouse(currentMouseButtons, 0, 0)
+        } else {
+            NativeEmulatorBridge.updateMouse(currentMouseButtons, 0, 0)
+        }
     }
 
     // Auto-detect high refresh rate
@@ -1478,7 +1486,11 @@ private fun DosboxPlayScreen(game: GameEntry, settings: SettingsState, onExit: (
                                 lastY = event.y
                                 accX = 0f
                                 accY = 0f
-                                NativeEmulatorBridge.updateMouse(mouseButtonsState.value, 0, 0)
+                                if (game.consoleType == ConsoleType.DOSBOX) {
+                                    DosboxBridge.updateMouse(mouseButtonsState.value, 0, 0)
+                                } else {
+                                    NativeEmulatorBridge.updateMouse(mouseButtonsState.value, 0, 0)
+                                }
                             }
                             MotionEvent.ACTION_MOVE -> {
                                 val dx = (event.x - lastX) * 3.0f // Increased sensitivity multiplier
@@ -1491,7 +1503,11 @@ private fun DosboxPlayScreen(game: GameEntry, settings: SettingsState, onExit: (
                                 val idy = accY.toInt()
                                 
                                 if (idx != 0 || idy != 0) {
-                                    NativeEmulatorBridge.updateMouse(mouseButtonsState.value, idx, idy)
+                                    if (game.consoleType == ConsoleType.DOSBOX) {
+                                        DosboxBridge.updateMouse(mouseButtonsState.value, idx, idy)
+                                    } else {
+                                        NativeEmulatorBridge.updateMouse(mouseButtonsState.value, idx, idy)
+                                    }
                                     accX -= idx
                                     accY -= idy
                                 }
@@ -1499,7 +1515,11 @@ private fun DosboxPlayScreen(game: GameEntry, settings: SettingsState, onExit: (
                                 lastY = event.y
                             }
                             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                                NativeEmulatorBridge.updateMouse(mouseButtonsState.value, 0, 0)
+                                if (game.consoleType == ConsoleType.DOSBOX) {
+                                    DosboxBridge.updateMouse(mouseButtonsState.value, 0, 0)
+                                } else {
+                                    NativeEmulatorBridge.updateMouse(mouseButtonsState.value, 0, 0)
+                                }
                             }
                         }
                         true
@@ -1551,11 +1571,17 @@ private fun DosboxPlayScreen(game: GameEntry, settings: SettingsState, onExit: (
                         onClick = {
                             NativeEmulatorBridge.sendKeyString(profile.skipKey)
                             scope.launch {
-                                NativeEmulatorBridge.updateInput(0, currentMask or (1 shl RETRO_DEVICE_ID_JOYPAD_B))
-                                NativeEmulatorBridge.updateInput(1, currentMask or (1 shl RETRO_DEVICE_ID_JOYPAD_B))
-                                delay(100)
-                                NativeEmulatorBridge.updateInput(0, currentMask)
-                                NativeEmulatorBridge.updateInput(1, currentMask)
+                                if (game.consoleType == ConsoleType.DOSBOX) {
+                                    DosboxBridge.updateInput(1, currentMask or (1 shl RETRO_DEVICE_ID_JOYPAD_B))
+                                    delay(100)
+                                    DosboxBridge.updateInput(1, currentMask)
+                                } else {
+                                    NativeEmulatorBridge.updateInput(0, currentMask or (1 shl RETRO_DEVICE_ID_JOYPAD_B))
+                                    NativeEmulatorBridge.updateInput(1, currentMask or (1 shl RETRO_DEVICE_ID_JOYPAD_B))
+                                    delay(100)
+                                    NativeEmulatorBridge.updateInput(0, currentMask)
+                                    NativeEmulatorBridge.updateInput(1, currentMask)
+                                }
                             }
                         },
                         modifier = Modifier
@@ -1632,12 +1658,12 @@ private fun DosboxPlayScreen(game: GameEntry, settings: SettingsState, onExit: (
                     onAnalogMove = { x, y ->
                         val sensitivity = settings.sensitivity
                         if (game.consoleType == ConsoleType.DOSBOX) {
-                            // Translate stick movement to mouse relative movement
-                            val dx = (x * 20f * sensitivity).toInt()
-                            val dy = (y * 20f * sensitivity).toInt()
-                            if (dx != 0 || dy != 0) {
-                                NativeEmulatorBridge.updateMouse(mouseButtonsState.value, dx, dy)
-                            }
+                            // Send analog stick as joystick axes to DOSBox (port 1)
+                            // This lets the libretro core synthesize mouse deltas reliably
+                            val valX = (x * 32767f * sensitivity).toInt().coerceIn(-32768, 32767)
+                            val valY = (y * 32767f * sensitivity).toInt().coerceIn(-32768, 32767)
+                            DosboxBridge.updateAnalog(1, 0, 0, valX)
+                            DosboxBridge.updateAnalog(1, 0, 1, valY)
                         } else {
                             // Analog X/Y range -32768 to 32767
                             val valX = (x * 32767f * sensitivity).toInt().coerceIn(-32768, 32767)

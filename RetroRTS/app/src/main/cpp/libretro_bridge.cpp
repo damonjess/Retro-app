@@ -1,4 +1,8 @@
 #include "libretro_bridge.h"
+#include <signal.h>
+#ifdef __ANDROID__
+#include <unwind.h>
+#endif
 #include <dlfcn.h>
 #include <android/log.h>
 #include <thread>
@@ -25,6 +29,40 @@
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 namespace retrorts {
+
+#ifdef __ANDROID__
+struct BacktraceState {
+    void** current;
+    void** end;
+};
+
+static _Unwind_Reason_Code unwind_callback(struct _Unwind_Context* context, void* arg) {
+    BacktraceState* state = static_cast<BacktraceState*>(arg);
+    uintptr_t pc = _Unwind_GetIP(context);
+    if (pc) {
+        if (state->current == state->end) return _URC_END_OF_STACK;
+        *state->current++ = reinterpret_cast<void*>(pc);
+    }
+    return _URC_NO_REASON;
+}
+
+static void log_backtrace() {
+    void* buffer[32];
+    BacktraceState state = {buffer, buffer + 32};
+    _Unwind_Backtrace(unwind_callback, &state);
+    int count = state.current - buffer;
+
+    for (int i = 0; i < count; i++) {
+        Dl_info info;
+        if (dladdr(buffer[i], &info) && info.dli_sname) {
+            __android_log_print(ANDROID_LOG_ERROR, "LibretroBridge", "  #%02d pc %p %s (%s)",
+                                i, buffer[i], info.dli_sname, info.dli_fname);
+        } else {
+            __android_log_print(ANDROID_LOG_ERROR, "LibretroBridge", "  #%02d pc %p", i, buffer[i]);
+        }
+    }
+}
+#endif
 
 static void dummy_vblank(int, int) {}
 
@@ -72,6 +110,29 @@ LibretroHost::LibretroHost() {
         for (int i = 0; i < 2; i++)
             for (int a = 0; a < 2; a++)
                 analogState_[p][i][a].store(0);
+    // Install a basic native crash handler to log signals and a backtrace
+    struct sigaction sa;
+    sa.sa_sigaction = [](int sig, siginfo_t* info, void* ucontext) {
+        LOGE("Native crash handler: signal=%d, si_addr=%p", sig, info ? info->si_addr : nullptr);
+#ifdef __ANDROID__
+        log_backtrace();
+#endif
+        // Restore default and re-raise to let system produce tombstone
+        signal(sig, SIG_DFL);
+        raise(sig);
+    };
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_SIGINFO | SA_RESETHAND;
+    sigaction(SIGSEGV, &sa, nullptr);
+    sigaction(SIGABRT, &sa, nullptr);
+    sigaction(SIGFPE,  &sa, nullptr);
+    sigaction(SIGILL,  &sa, nullptr);
+}
+
+void LibretroHost::startRunLoop() {
+    // If a run thread is already active, don't start another.
+    if (runThread_.joinable()) return;
+    runThread_ = std::thread(&LibretroHost::runLoop, this);
 }
 
 bool LibretroHost::initAudio(double sampleRate) {
@@ -83,7 +144,10 @@ bool LibretroHost::initAudio(double sampleRate) {
     aaudio_result_t result = AAudio_createStreamBuilder(&builder);
     if (result != AAUDIO_OK) return false;
 
-    AAudioStreamBuilder_setSampleRate(builder, (int32_t)sampleRate);
+    // Do not force a specific sample rate on all devices; allow the
+    // audio system to choose a supported rate and read it back after
+    // the stream opens. Forcing unsupported rates caused audio startup
+    // failures on some OEM devices.
     AAudioStreamBuilder_setChannelCount(builder, 2);
     AAudioStreamBuilder_setFormat(builder, AAUDIO_FORMAT_PCM_I16);
     AAudioStreamBuilder_setPerformanceMode(builder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
@@ -98,10 +162,15 @@ bool LibretroHost::initAudio(double sampleRate) {
         return false;
     }
 
-    // Increased buffer size to the full capacity to handle jitter better.
+    // Keep latency low; don't max out the buffer. Query the actual
+    // stream sample rate chosen by the system and adapt our bookkeeping.
+    lastSampleRate_ = AAudioStream_getSampleRate(audioStream_);
     int32_t capacity = AAudioStream_getBufferCapacityInFrames(audioStream_);
-    AAudioStream_setBufferSizeInFrames(audioStream_, capacity);
-    LOGI("AAudio stream opened: capacity=%d, bufferSize=%d", capacity, AAudioStream_getBufferSizeInFrames(audioStream_));
+    int32_t burst = AAudioStream_getFramesPerBurst(audioStream_);
+    int32_t requestedSize = burst * 4;
+    AAudioStream_setBufferSizeInFrames(audioStream_, requestedSize);
+    LOGI("AAudio stream opened: capacity=%d, burst=%d, bufferSize=%d",
+         capacity, burst, AAudioStream_getBufferSizeInFrames(audioStream_));
 
     result = AAudioStream_requestStart(audioStream_);
     if (result != AAUDIO_OK) {
@@ -262,10 +331,10 @@ void LibretroHost::updateAnalog(int port, int index, int id, int16_t value) {
     }
 }
 
-void LibretroHost::updateMouse(int buttonMask, int16_t dx, int16_t dy) {
+void LibretroHost::updateMouse(int buttonMask, int dx, int dy) {
     mouseButtons_.store(static_cast<uint16_t>(buttonMask));
-    mouseX_.fetch_add(dx);
-    mouseY_.fetch_add(dy);
+    mouseX_.fetch_add(static_cast<int32_t>(dx));
+    mouseY_.fetch_add(static_cast<int32_t>(dy));
 }
 
 bool LibretroHost::swapDisk(unsigned diskIndex) {
@@ -373,20 +442,27 @@ void LibretroHost::runLoop() {
         }
 
         auto end = std::chrono::steady_clock::now();
-        totalRunTimeUs_.fetch_add(std::chrono::duration_cast<std::chrono::microseconds>(end - start).count());
+        totalRunTimeUs_.fetch_add(
+            std::chrono::duration_cast<std::chrono::microseconds>(end - start).count());
+
+        // Throttle the frame loop so DOSBox doesn't outrun real-time.
+        // Without this, the core generates audio faster than AAudio can drain it,
+        // causing constant timeouts and silence.
+        auto frameBudget = std::chrono::microseconds(16667); // ~60 FPS
+        if (end - start < frameBudget) {
+            std::this_thread::sleep_for(frameBudget - (end - start));
+        }
 
         // Update stats every second
         auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastStatsTime_).count();
-        if (elapsed >= 1000) {
-            currentFps_.store((float)frameCount_.exchange(0) * 1000.0f / elapsed);
+        auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastStatsTime_).count();
+        if (elapsedMs >= 1000) {
+            currentFps_.store((float)frameCount_.exchange(0) * 1000.0f / elapsedMs);
             // cpu % = (time spent in run / total time) * 100
-            currentCpu_.store((float)totalRunTimeUs_.exchange(0) / (elapsed * 10.0f));
+            currentCpu_.store((float)totalRunTimeUs_.exchange(0) / (elapsedMs * 10.0f));
             lastStatsTime_ = now;
         }
 
-        // Removed sleep_for(1). The audio write in audioBatchCallback
-        // will block when the buffer is full, providing natural sync.
     }
     LOGI("runLoop: exited");
 }
@@ -405,7 +481,14 @@ void LibretroHost::setWindow(ANativeWindow* window) {
 }
 
 void LibretroHost::stop() {
+    // Signal runLoop to exit and wait for its thread to finish before
+    // unloading cores or touching core state. This prevents races where
+    // the loop calls into a core while it's being dlclosed.
     running_.store(false);
+    if (runThread_.joinable()) {
+        runThread_.join();
+    }
+
     std::lock_guard<std::recursive_mutex> lock(coreMutex_);
     deinitAudio();
     if (window_) {
@@ -727,21 +810,29 @@ size_t LibretroHost::audioBatchCallback(const int16_t* data, size_t frames) {
             volBuffer[i] = static_cast<int16_t>(static_cast<float>(data[i]) * vol);
         }
 
-        aaudio_result_t result = AAudioStream_write(host.audioStream_, volBuffer.data(), (int32_t)frames, 100000000);
+        // Use a shorter write timeout to fail fast and allow the host
+        // to restart the stream if writes stall (500ms was too long).
+        aaudio_result_t result = AAudioStream_write(
+            host.audioStream_, volBuffer.data(), (int32_t)frames, 20000000); // 20ms
         if (result >= 0) return (size_t)result;
-        if (result == AAUDIO_ERROR_TIMEOUT) return 0;
+        if (result == AAUDIO_ERROR_TIMEOUT) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            return 0;
+        }
         LOGE("AAudio write error: %s", AAudio_convertResultToText(result));
         host.initAudio(host.lastSampleRate_);
         return 0;
     }
 
     // Blocking write to maintain sync with core.
-    // Libretro cores generally expect the audio callback to block when the buffer is full.
-    aaudio_result_t result = AAudioStream_write(host.audioStream_, data, (int32_t)frames, 100000000); // 100ms
+    // Use a shorter write timeout to avoid long blocking stalls.
+    aaudio_result_t result = AAudioStream_write(
+        host.audioStream_, data, (int32_t)frames, 20000000); // 20ms
     if (result >= 0) return (size_t)result;
 
     if (result == AAUDIO_ERROR_TIMEOUT) {
-        return 0; // Tell core we wrote nothing, try again.
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        return 0;
     }
 
     LOGE("AAudio write error: %s", AAudio_convertResultToText(result));
@@ -779,24 +870,32 @@ int16_t LibretroHost::inputStateCallback(unsigned port, unsigned device, unsigne
 
             switch (id) {
                 case RETRO_DEVICE_ID_MOUSE_X: {
-                    int16_t stickX0 = host.analogState_[0][0][0].load();
-                    int16_t stickX1 = host.analogState_[1][0][0].load();
-                    int16_t stickX  = (stickX0 != 0) ? stickX0 : stickX1;
-                    int16_t stickDelta = (stickX != 0) ? (stickX / 900) : 0;
-                    int16_t dpadDelta = 0;
+                    int32_t stickX0 = host.analogState_[0][0][0].load();
+                    int32_t stickX1 = host.analogState_[1][0][0].load();
+                    int32_t stickX  = (stickX0 != 0) ? stickX0 : stickX1;
+                    int32_t stickDelta = (stickX != 0) ? (stickX / 900) : 0;
+                    int32_t dpadDelta = 0;
                     if (pad & (1U << 7)) dpadDelta += 8; // Right
                     if (pad & (1U << 6)) dpadDelta -= 8; // Left
-                    return stickDelta + dpadDelta + host.mouseX_.exchange(0);
+                    int32_t acc = host.mouseX_.exchange(0);
+                    int32_t sum = stickDelta + dpadDelta + acc;
+                    if (sum > INT16_MAX) sum = INT16_MAX;
+                    if (sum < INT16_MIN) sum = INT16_MIN;
+                    return static_cast<int16_t>(sum);
                 }
                 case RETRO_DEVICE_ID_MOUSE_Y: {
-                    int16_t stickY0 = host.analogState_[0][0][1].load();
-                    int16_t stickY1 = host.analogState_[1][0][1].load();
-                    int16_t stickY  = (stickY0 != 0) ? stickY0 : stickY1;
-                    int16_t stickDelta = (stickY != 0) ? (stickY / 900) : 0;
-                    int16_t dpadDelta = 0;
+                    int32_t stickY0 = host.analogState_[0][0][1].load();
+                    int32_t stickY1 = host.analogState_[1][0][1].load();
+                    int32_t stickY  = (stickY0 != 0) ? stickY0 : stickY1;
+                    int32_t stickDelta = (stickY != 0) ? (stickY / 900) : 0;
+                    int32_t dpadDelta = 0;
                     if (pad & (1U << 5)) dpadDelta += 8; // Down
                     if (pad & (1U << 4)) dpadDelta -= 8; // Up
-                    return stickDelta + dpadDelta + host.mouseY_.exchange(0);
+                    int32_t acc = host.mouseY_.exchange(0);
+                    int32_t sum = stickDelta + dpadDelta + acc;
+                    if (sum > INT16_MAX) sum = INT16_MAX;
+                    if (sum < INT16_MIN) sum = INT16_MIN;
+                    return static_cast<int16_t>(sum);
                 }
                 case RETRO_DEVICE_ID_MOUSE_LEFT: {
                     bool mouseLeft = (host.mouseButtons_.load() & 1);
@@ -855,7 +954,7 @@ extern "C" int PCSX_Run(const char* bios, const char* disc, const char* saveDir)
 
     if (host.loadGame(disc) != 0) return -2;
 
-    std::thread([&host]() { host.runLoop(); }).detach();
+    host.startRunLoop();
     return 0;
 }
 
@@ -931,7 +1030,7 @@ extern "C" int uae_init_multi(const char* const* disk_paths, size_t disk_count, 
 
     if (host.loadGame(contentPath) != 0) return -2;
 
-    std::thread([&host]() { host.runLoop(); }).detach();
+    host.startRunLoop();
     return 0;
 }
 
@@ -948,7 +1047,7 @@ extern "C" int dosbox_init(const char* config_path, const char* saveDir) {
     }
     if (host.loadGame(config_path) != 0) return -2;
 
-    std::thread([&host]() { host.runLoop(); }).detach();
+    host.startRunLoop();
     return 0;
 }
 
@@ -965,7 +1064,7 @@ extern "C" int dsi_init(const char* rom_path) {
     }
     if (host.loadGame(rom_path) != 0) return -2;
 
-    std::thread([&host]() { host.runLoop(); }).detach();
+    host.startRunLoop();
     return 0;
 }
 
@@ -985,7 +1084,7 @@ extern "C" int xbox_init(const char* rom_path, const char* bios_path) {
 
     if (host.loadGame(rom_path) != 0) return -2;
 
-    std::thread([&host]() { host.runLoop(); }).detach();
+    host.startRunLoop();
     return 0;
 }
 

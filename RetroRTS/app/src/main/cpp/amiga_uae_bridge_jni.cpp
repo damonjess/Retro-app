@@ -130,7 +130,7 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_retrorts_ui_AmigaBridge_updateMouseNative(
     JNIEnv*, jclass, jint buttonMask, jint dx, jint dy) {
     retrorts::LibretroHost::getInstance().updateMouse(
-        buttonMask, static_cast<int16_t>(dx), static_cast<int16_t>(dy));
+        buttonMask, static_cast<int>(dx), static_cast<int>(dy));
 }
 
 extern "C" JNIEXPORT void JNICALL

@@ -57,6 +57,18 @@ private const val TAG = "DosboxBridge"
         return runCatching { loadStateNative(gameId, slot, path) }.getOrDefault(false)
     }
 
+    fun updateInput(port: Int, buttonMask: Int) {
+        if (isAvailable) runCatching { updateInputNative(port, buttonMask) }
+    }
+
+    fun updateAnalog(port: Int, index: Int, id: Int, value: Int) {
+        if (isAvailable) runCatching { updateAnalogNative(port, index, id, value) }
+    }
+
+    fun updateMouse(buttonMask: Int, dx: Int, dy: Int) {
+        if (isAvailable) runCatching { updateMouseNative(buttonMask, dx, dy) }
+    }
+
     // ── native declarations ─────────────────────────────────────────
     @JvmStatic private external fun startDosboxNative(gameDir: String, configPath: String): Boolean
     @JvmStatic private external fun stopDosboxNative()
@@ -67,5 +79,8 @@ private const val TAG = "DosboxBridge"
     @JvmStatic private external fun getPerfStatsNative(): FloatArray
     @JvmStatic private external fun saveStateNative(gameId: String, slot: Int, path: String): Boolean
     @JvmStatic private external fun loadStateNative(gameId: String, slot: Int, path: String): Boolean
+    @JvmStatic private external fun updateInputNative(port: Int, buttonMask: Int)
+    @JvmStatic private external fun updateAnalogNative(port: Int, index: Int, id: Int, value: Int)
+    @JvmStatic private external fun updateMouseNative(buttonMask: Int, dx: Int, dy: Int)
 }
 }

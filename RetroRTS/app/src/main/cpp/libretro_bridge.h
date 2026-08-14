@@ -5,6 +5,7 @@
 #include <mutex>
 #include <vector>
 #include <chrono>
+#include <thread>
 #include <android/native_window.h>
 #include <aaudio/AAudio.h>
 #include "libretro.h"
@@ -20,13 +21,14 @@ public:
     int loadCore(const std::string& corePath);
     int loadGame(const std::string& romPath);
     void runLoop();
+    void startRunLoop();
     void stop();
 
     void sendKeyString(const std::string& text);
     void sendKeyCode(unsigned keycode);
     void updateJoypad(int port, uint16_t state);
     void updateAnalog(int port, int index, int id, int16_t value);
-    void updateMouse(int buttonMask, int16_t dx, int16_t dy);
+    void updateMouse(int buttonMask, int dx, int dy);
 
     // Disk-control support is registered by a core through envCallback().
     // Disk indices are zero-based at this layer.
@@ -73,8 +75,8 @@ private:
     double lastSampleRate_ = 44100.0;
     std::atomic<uint16_t> mouseButtons_{0};
     std::atomic<int64_t> mouseHoldUntil_{0};
-    std::atomic<int16_t> mouseX_{0};
-    std::atomic<int16_t> mouseY_{0};
+    std::atomic<int32_t> mouseX_{0};
+    std::atomic<int32_t> mouseY_{0};
     CoreType coreType_ = CoreType::NONE;
     std::string currentGamePath_;
     std::atomic<float> volume_{1.0f};
@@ -102,6 +104,7 @@ private:
     std::atomic<int> frameCount_{0};
     std::atomic<long long> totalRunTimeUs_{0};
     std::chrono::steady_clock::time_point lastStatsTime_;
+    std::thread runThread_;
 
     void (*retro_init_fn)() = nullptr;
     void (*retro_deinit_fn)() = nullptr;

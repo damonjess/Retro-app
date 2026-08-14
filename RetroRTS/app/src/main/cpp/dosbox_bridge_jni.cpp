@@ -1,5 +1,6 @@
 #include <jni.h>
 #include <android/log.h>
+#include <android/native_window_jni.h>
 #include <dlfcn.h>
 #include <string>
 #include <atomic>
@@ -94,4 +95,36 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_com_retrorts_ui_DosboxBridge_loadStateNative(
     JNIEnv* env, jclass, jstring gameId, jint slot, jstring path) {
     return JNI_FALSE; // To be implemented via LibretroHost
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_retrorts_ui_DosboxBridge_updateInputNative(
+    JNIEnv*, jclass, jint port, jint buttonMask) {
+    if (buttonMask != 0) {
+        LOGI("JNI DosboxBridge: port=%d, mask=0x%04X", port, buttonMask);
+    }
+    retrorts::LibretroHost::getInstance().updateJoypad(port, static_cast<uint16_t>(buttonMask));
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_retrorts_ui_DosboxBridge_updateAnalogNative(
+    JNIEnv*, jclass, jint port, jint index, jint id, jint value) {
+    retrorts::LibretroHost::getInstance().updateAnalog(port, index, id, static_cast<int16_t>(value));
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_retrorts_ui_DosboxBridge_updateMouseNative(
+    JNIEnv*, jclass, jint buttonMask, jint dx, jint dy) {
+    retrorts::LibretroHost::getInstance().updateMouse(
+        buttonMask, static_cast<int>(dx), static_cast<int>(dy));
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_retrorts_ui_DosboxBridge_setSurfaceNative(
+    JNIEnv* env, jclass, jobject surface) {
+    ANativeWindow* window = surface
+        ? ANativeWindow_fromSurface(env, surface)
+        : nullptr;
+    retrorts::LibretroHost::getInstance().setWindow(window);
+    if (window) ANativeWindow_release(window);
 }
