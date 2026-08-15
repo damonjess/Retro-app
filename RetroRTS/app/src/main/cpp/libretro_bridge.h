@@ -12,7 +12,7 @@
 
 namespace retrorts {
 
-enum class CoreType { NONE, PS1, AMIGA, DOSBOX, NINTENDO_DSI, XBOX };
+enum class CoreType { NONE, PS1, PS2, AMIGA, DOSBOX, NINTENDO_DSI, XBOX };
 
 class LibretroHost {
 public:
@@ -127,6 +127,7 @@ private:
 
 extern "C" {
     int PCSX_Run(const char* bios, const char* disc, const char* saveDir);
+    int play_init(const char* gamePath, const char* saveDir);
     int uae_init(const char* rom_path, const char* bios_path);
     int uae_init_multi(const char* const* disk_paths, size_t disk_count, const char* bios_path);
     int dosbox_init(const char* config_path, const char* saveDir);

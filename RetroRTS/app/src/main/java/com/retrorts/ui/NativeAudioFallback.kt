@@ -3,13 +3,14 @@ package com.retrorts.ui
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
-import android.media.AudioManager
+import java.nio.ByteBuffer
 import kotlin.math.max
 import kotlin.math.min
 
 /**
- * Fallback PCM output for devices where the native AAudio stream cannot be
- * opened or remains unavailable. Called only from the native emulator bridge.
+ * Managed PCM output used by DOSBox-Pure on devices where AAudio is silent or
+ * unreliable. Native code supplies a direct ByteBuffer, avoiding a per-audio-
+ * callback ShortArray copy that can cause stutter on lower-powered devices.
  */
 object NativeAudioFallback {
     @Volatile
@@ -27,7 +28,9 @@ object NativeAudioFallback {
         )
         if (minBuffer <= 0) return false
 
-        val bufferSize = max(minBuffer * 4, sampleRate / 5 * 4)
+        // Prioritise stable game audio over very low latency. A 333 ms target
+        // absorbs emulator-frame variation that would otherwise cause clicks.
+        val bufferSize = max(minBuffer * 6, sampleRate / 3 * 4)
         return runCatching {
             val newTrack = AudioTrack.Builder()
                 .setAudioAttributes(
@@ -56,20 +59,20 @@ object NativeAudioFallback {
         }
     }
 
-    /** Returns the number of stereo frames accepted by Android. */
+    /** Returns the number of stereo PCM frames accepted by Android. */
     @JvmStatic
-    fun write(samples: ShortArray, frames: Int): Int {
+    fun writeBuffer(buffer: ByteBuffer, byteCount: Int): Int {
         val activeTrack = track ?: return 0
-        val sampleCount = min(samples.size, frames.coerceAtLeast(0) * 2)
-        if (sampleCount == 0 || activeTrack.playState != AudioTrack.PLAYSTATE_PLAYING) return 0
+        val safeByteCount = min(buffer.capacity(), byteCount.coerceAtLeast(0))
+        if (safeByteCount < 4 || activeTrack.playState != AudioTrack.PLAYSTATE_PLAYING) return 0
+
         return try {
-            val writtenSamples = activeTrack.write(
-                samples,
-                0,
-                sampleCount,
-                AudioTrack.WRITE_BLOCKING
-            )
-            if (writtenSamples > 0) writtenSamples / 2 else 0
+            buffer.position(0)
+            buffer.limit(safeByteCount)
+            val writtenBytes = activeTrack.write(buffer, safeByteCount, AudioTrack.WRITE_BLOCKING)
+            if (writtenBytes > 0) writtenBytes / 4 else 0
+        } catch (_: IllegalArgumentException) {
+            0
         } catch (_: IllegalStateException) {
             0
         }

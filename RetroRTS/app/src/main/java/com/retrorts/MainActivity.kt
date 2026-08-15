@@ -90,6 +90,7 @@ import com.retrorts.ui.GamePathValidator
 import com.retrorts.ui.NativeEmulatorBridge
 import com.retrorts.ui.RetroButton
 import com.retrorts.ui.RetroCard
+import com.retrorts.ui.Ps2SetupPanel
 import com.retrorts.ui.ScanlineOverlay
 import com.retrorts.ui.downloads.DirectImportScreen
 import com.retrorts.ui.theme.RetroTheme
@@ -1330,6 +1331,10 @@ private fun SettingsTab(
                     StoragePath("SAVES",   "/sdcard/RetroRTS/saves/")
                 }
             }
+
+            Ps2SetupPanel(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            )
         }
     }
 }

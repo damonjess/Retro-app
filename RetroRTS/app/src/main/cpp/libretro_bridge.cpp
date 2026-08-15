@@ -1,5 +1,6 @@
 #include "libretro_bridge.h"
 #include <jni.h>
+#include <cstring>
 #include <signal.h>
 #ifdef __ANDROID__
 #include <unwind.h>
@@ -36,6 +37,7 @@ jmethodID g_nativeAudioStart = nullptr;
 jmethodID g_nativeAudioWrite = nullptr;
 jmethodID g_nativeAudioStop = nullptr;
 std::mutex g_nativeAudioMutex;
+std::vector<int16_t> g_nativeAudioPcm;
 
 JNIEnv* getAudioJniEnv(bool* attachedByUs) {
     *attachedByUs = false;
@@ -77,7 +79,8 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void*) {
     if (!g_nativeAudioFallbackClass) return JNI_VERSION_1_6;
 
     g_nativeAudioStart = env->GetStaticMethodID(g_nativeAudioFallbackClass, "start", "(I)Z");
-    g_nativeAudioWrite = env->GetStaticMethodID(g_nativeAudioFallbackClass, "write", "([SI)I");
+    g_nativeAudioWrite = env->GetStaticMethodID(
+        g_nativeAudioFallbackClass, "writeBuffer", "(Ljava/nio/ByteBuffer;I)I");
     g_nativeAudioStop = env->GetStaticMethodID(g_nativeAudioFallbackClass, "stop", "()V");
     if (!g_nativeAudioStart || !g_nativeAudioWrite || !g_nativeAudioStop) {
         env->ExceptionClear();
@@ -228,24 +231,29 @@ void LibretroHost::deinitJavaAudioFallback() {
 size_t LibretroHost::writeJavaAudioFallback(const int16_t* data, size_t frames) {
     if (!usingJavaAudioFallback_ || !data || frames == 0 || !g_nativeAudioWrite) return 0;
     const size_t sampleCount = frames * 2;
-    if (sampleCount > static_cast<size_t>(INT32_MAX)) return 0;
+    const size_t byteCount = sampleCount * sizeof(int16_t);
+    if (byteCount > static_cast<size_t>(INT32_MAX)) return 0;
 
     std::lock_guard<std::mutex> lock(g_nativeAudioMutex);
     bool attachedByUs = false;
     JNIEnv* env = getAudioJniEnv(&attachedByUs);
     if (!env) return 0;
-    jshortArray pcm = env->NewShortArray(static_cast<jsize>(sampleCount));
-    if (!pcm) {
-        clearAudioJniException(env, "allocate PCM buffer");
+
+    // Reuse native storage and expose it as a direct ByteBuffer. This avoids
+    // allocating a Java short[] and copying it on every emulated audio frame.
+    if (g_nativeAudioPcm.size() < sampleCount) g_nativeAudioPcm.resize(sampleCount);
+    std::memcpy(g_nativeAudioPcm.data(), data, byteCount);
+    jobject pcmBuffer = env->NewDirectByteBuffer(g_nativeAudioPcm.data(),
+                                                   static_cast<jlong>(byteCount));
+    if (!pcmBuffer) {
+        clearAudioJniException(env, "allocate direct PCM buffer");
         if (attachedByUs) g_javaVm->DetachCurrentThread();
         return 0;
     }
-    env->SetShortArrayRegion(pcm, 0, static_cast<jsize>(sampleCount),
-                             reinterpret_cast<const jshort*>(data));
     const jint written = env->CallStaticIntMethod(g_nativeAudioFallbackClass, g_nativeAudioWrite,
-                                                   pcm, static_cast<jint>(frames));
-    clearAudioJniException(env, "write");
-    env->DeleteLocalRef(pcm);
+                                                   pcmBuffer, static_cast<jint>(byteCount));
+    clearAudioJniException(env, "writeBuffer");
+    env->DeleteLocalRef(pcmBuffer);
     if (attachedByUs) g_javaVm->DetachCurrentThread();
     return written > 0 ? std::min(frames, static_cast<size_t>(written)) : 0;
 }
@@ -1170,6 +1178,29 @@ extern "C" int PCSX_Run(const char* bios, const char* disc, const char* saveDir)
     if (host.loadCore("libpcsx_rearmed.so") != 0) return -10;
 
     if (host.loadGame(disc) != 0) return -2;
+
+    host.startRunLoop();
+    return 0;
+}
+
+extern "C" int play_init(const char* gamePath, const char* saveDir) {
+    if (!gamePath || gamePath[0] == '\0') {
+        LOGE("Bridge: play_init called without a game path");
+        return -3;
+    }
+
+    LOGI("Bridge: play_init called for %s", gamePath);
+    auto& host = LibretroHost::getInstance();
+    host.stop();
+    host.setCoreType(CoreType::PS2);
+    host.setSystemDir("/storage/emulated/0/RetroRTS/system/ps2");
+    host.setSaveDir(saveDir ? saveDir : "/storage/emulated/0/RetroRTS/Saves/PS2");
+
+    // Produced by Play!'s official build_retro/android_build.sh script.
+    if (host.loadCore("libplay_libretro.so") != 0) {
+        if (host.loadCore("libplay_libretro_android.so") != 0) return -10;
+    }
+    if (host.loadGame(gamePath) != 0) return -2;
 
     host.startRunLoop();
     return 0;

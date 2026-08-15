@@ -1,6 +1,7 @@
 #include "emulator_core.h"
 #include "dsi_core.h"
 #include "ps1_core.h"
+#include "ps2_core.h"
 #include "amiga_core.h"
 #include "xbox_core.h"
 #include "libretro_bridge.h"
@@ -52,11 +53,19 @@ std::string LaunchGame(const std::string& console,
         return "OK: " + result.message;
     }
 
-    // ── PS2 ──────────────────────────────────────────────────────────────
+    // ── PS2 / Play! ───────────────────────────────────────────────────────
     else if (c == "PS2") {
-        return "ERROR: PS2 core is not yet implemented. "
-               "A real PS2 emulator requires PCSX2 integration (128-bit CPU, GS emulation, VU0/VU1). "
-               "This is planned for a future release.";
+        auto result = retrorts::ps2::LaunchPs2Game(romPath);
+        if (!result.ok) return "ERROR: " + result.message;
+
+        const int status = play_init(result.resolvedGamePath.c_str(), saveDir.c_str());
+        if (status == -10) {
+            return "ERROR: PlayStation 2 support needs the Play! libretro core. "
+                   "Build the official Play! Android libretro target and copy the resulting "
+                   "libplay_libretro.so into app/src/main/jniLibs/arm64-v8a/.";
+        }
+        if (status != 0) return "ERROR: PlayStation 2 core failed with code " + std::to_string(status);
+        return "OK: " + result.message;
     }
 
     // ── DOSBOX ───────────────────────────────────────────────────────────
@@ -73,18 +82,25 @@ std::string LaunchGame(const std::string& console,
         std::string configPath = cacheDir + "/dosbox_auto.conf";
         std::string config = R"([dosbox]
 machine=svga_s3
-memsize=128
+memsize=16
 
 [cpu]
 core=dynamic
-cycles=auto 30000 80% limit 40000
+# Dune II is most stable at a fixed 386DX/33-class speed. Dynamic cycles
+# can swing under Android scheduling load and cause uneven game/audio pacing.
+cycles=fixed 7800
+
+[mixer]
+rate=48000
+blocksize=1024
+prebuffer=60
 
 [render]
 frameskip=0
 aspect=true
 
 [sblaster]
-sbtype=sb16
+sbtype=sbpro2
 sbbase=220
 irq=7
 dma=1

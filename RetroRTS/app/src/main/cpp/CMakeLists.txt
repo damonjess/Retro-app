@@ -128,6 +128,7 @@ add_library(pcsx_rearmed SHARED
     libretro_bridge.cpp
     dsi_core.cpp
     ps1_core.cpp
+    ps2_core.cpp
     amiga_core.cpp
     xbox_core.cpp
     amiga_uae_bridge_jni.cpp
