@@ -1,4 +1,5 @@
 #include "libretro_bridge.h"
+#include <jni.h>
 #include <signal.h>
 #ifdef __ANDROID__
 #include <unwind.h>
@@ -27,6 +28,65 @@
 #define LOG_TAG "LibretroBridge"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+
+namespace {
+JavaVM* g_javaVm = nullptr;
+jclass g_nativeAudioFallbackClass = nullptr;
+jmethodID g_nativeAudioStart = nullptr;
+jmethodID g_nativeAudioWrite = nullptr;
+jmethodID g_nativeAudioStop = nullptr;
+std::mutex g_nativeAudioMutex;
+
+JNIEnv* getAudioJniEnv(bool* attachedByUs) {
+    *attachedByUs = false;
+    if (!g_javaVm) return nullptr;
+    JNIEnv* env = nullptr;
+    const jint getEnvResult = g_javaVm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
+    if (getEnvResult == JNI_OK) return env;
+    if (getEnvResult != JNI_EDETACHED ||
+        g_javaVm->AttachCurrentThread(&env, nullptr) != JNI_OK) {
+        return nullptr;
+    }
+    *attachedByUs = true;
+    return env;
+}
+
+void clearAudioJniException(JNIEnv* env, const char* operation) {
+    if (env && env->ExceptionCheck()) {
+        env->ExceptionClear();
+        __android_log_print(ANDROID_LOG_ERROR, "LibretroBridge", "NativeAudioFallback %s threw", operation);
+    }
+}
+} // namespace
+
+extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void*) {
+    g_javaVm = vm;
+    JNIEnv* env = nullptr;
+    if (!vm || vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) {
+        return JNI_ERR;
+    }
+    jclass localClass = env->FindClass("com/retrorts/ui/NativeAudioFallback");
+    if (!localClass) {
+        // Keep the emulator usable with AAudio even if this optional fallback
+        // was not compiled into an older app build.
+        env->ExceptionClear();
+        return JNI_VERSION_1_6;
+    }
+    g_nativeAudioFallbackClass = static_cast<jclass>(env->NewGlobalRef(localClass));
+    env->DeleteLocalRef(localClass);
+    if (!g_nativeAudioFallbackClass) return JNI_VERSION_1_6;
+
+    g_nativeAudioStart = env->GetStaticMethodID(g_nativeAudioFallbackClass, "start", "(I)Z");
+    g_nativeAudioWrite = env->GetStaticMethodID(g_nativeAudioFallbackClass, "write", "([SI)I");
+    g_nativeAudioStop = env->GetStaticMethodID(g_nativeAudioFallbackClass, "stop", "()V");
+    if (!g_nativeAudioStart || !g_nativeAudioWrite || !g_nativeAudioStop) {
+        env->ExceptionClear();
+        g_nativeAudioStart = nullptr;
+        g_nativeAudioWrite = nullptr;
+        g_nativeAudioStop = nullptr;
+    }
+    return JNI_VERSION_1_6;
+}
 
 namespace retrorts {
 
@@ -135,31 +195,110 @@ void LibretroHost::startRunLoop() {
     runThread_ = std::thread(&LibretroHost::runLoop, this);
 }
 
+bool LibretroHost::initJavaAudioFallback(int sampleRate) {
+    usingJavaAudioFallback_ = false;
+    if (sampleRate <= 0 || !g_nativeAudioFallbackClass || !g_nativeAudioStart) return false;
+
+    std::lock_guard<std::mutex> lock(g_nativeAudioMutex);
+    bool attachedByUs = false;
+    JNIEnv* env = getAudioJniEnv(&attachedByUs);
+    if (!env) return false;
+    const jboolean started = env->CallStaticBooleanMethod(
+        g_nativeAudioFallbackClass, g_nativeAudioStart, static_cast<jint>(sampleRate));
+    clearAudioJniException(env, "start");
+    if (attachedByUs) g_javaVm->DetachCurrentThread();
+    usingJavaAudioFallback_ = (started == JNI_TRUE);
+    if (usingJavaAudioFallback_) LOGI("Using Java AudioTrack fallback at %d Hz", sampleRate);
+    return usingJavaAudioFallback_;
+}
+
+void LibretroHost::deinitJavaAudioFallback() {
+    if (!usingJavaAudioFallback_) return;
+    std::lock_guard<std::mutex> lock(g_nativeAudioMutex);
+    bool attachedByUs = false;
+    JNIEnv* env = getAudioJniEnv(&attachedByUs);
+    if (env && g_nativeAudioFallbackClass && g_nativeAudioStop) {
+        env->CallStaticVoidMethod(g_nativeAudioFallbackClass, g_nativeAudioStop);
+        clearAudioJniException(env, "stop");
+    }
+    if (attachedByUs) g_javaVm->DetachCurrentThread();
+    usingJavaAudioFallback_ = false;
+}
+
+size_t LibretroHost::writeJavaAudioFallback(const int16_t* data, size_t frames) {
+    if (!usingJavaAudioFallback_ || !data || frames == 0 || !g_nativeAudioWrite) return 0;
+    const size_t sampleCount = frames * 2;
+    if (sampleCount > static_cast<size_t>(INT32_MAX)) return 0;
+
+    std::lock_guard<std::mutex> lock(g_nativeAudioMutex);
+    bool attachedByUs = false;
+    JNIEnv* env = getAudioJniEnv(&attachedByUs);
+    if (!env) return 0;
+    jshortArray pcm = env->NewShortArray(static_cast<jsize>(sampleCount));
+    if (!pcm) {
+        clearAudioJniException(env, "allocate PCM buffer");
+        if (attachedByUs) g_javaVm->DetachCurrentThread();
+        return 0;
+    }
+    env->SetShortArrayRegion(pcm, 0, static_cast<jsize>(sampleCount),
+                             reinterpret_cast<const jshort*>(data));
+    const jint written = env->CallStaticIntMethod(g_nativeAudioFallbackClass, g_nativeAudioWrite,
+                                                   pcm, static_cast<jint>(frames));
+    clearAudioJniException(env, "write");
+    env->DeleteLocalRef(pcm);
+    if (attachedByUs) g_javaVm->DetachCurrentThread();
+    return written > 0 ? std::min(frames, static_cast<size_t>(written)) : 0;
+}
+
 bool LibretroHost::initAudio(double sampleRate) {
     deinitAudio();
     lastSampleRate_ = sampleRate;
+
+    // DOSBox-Pure is the affected path on this device. Prefer AudioTrack for
+    // it: it uses Android's managed mixer and avoids silent AAudio streams.
+    if (coreType_ == CoreType::DOSBOX &&
+        initJavaAudioFallback(static_cast<int>(sampleRate))) {
+        return true;
+    }
+
     LOGI("Initializing AAudio at %.2f Hz", sampleRate);
-
-    AAudioStreamBuilder* builder;
+    AAudioStreamBuilder* builder = nullptr;
     aaudio_result_t result = AAudio_createStreamBuilder(&builder);
-    if (result != AAUDIO_OK) return false;
+    if (result != AAUDIO_OK || !builder) {
+        LOGE("AAudio_createStreamBuilder failed: %s", AAudio_convertResultToText(result));
+        return initJavaAudioFallback(static_cast<int>(sampleRate));
+    }
 
-    // Do not force a specific sample rate on all devices; allow the
-    // audio system to choose a supported rate and read it back after
-    // the stream opens. Forcing unsupported rates caused audio startup
-    // failures on some OEM devices.
-    AAudioStreamBuilder_setChannelCount(builder, 2);
-    AAudioStreamBuilder_setFormat(builder, AAUDIO_FORMAT_PCM_I16);
-    AAudioStreamBuilder_setPerformanceMode(builder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
-    AAudioStreamBuilder_setUsage(builder, AAUDIO_USAGE_GAME);
-    AAudioStreamBuilder_setSharingMode(builder, AAUDIO_SHARING_MODE_SHARED);
+    auto configureBuilder = [](AAudioStreamBuilder* b, aaudio_performance_mode_t mode) {
+        AAudioStreamBuilder_setChannelCount(b, 2);
+        AAudioStreamBuilder_setFormat(b, AAUDIO_FORMAT_PCM_I16);
+        AAudioStreamBuilder_setPerformanceMode(b, mode);
+        AAudioStreamBuilder_setUsage(b, AAUDIO_USAGE_GAME);
+        AAudioStreamBuilder_setSharingMode(b, AAUDIO_SHARING_MODE_SHARED);
+    };
 
+    // Some devices reject LOW_LATENCY even though shared PCM playback works.
+    // Retry with the compatible performance profile instead of leaving DOSBox silent.
+    configureBuilder(builder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
     result = AAudioStreamBuilder_openStream(builder, &audioStream_);
-    AAudioStreamBuilder_delete(builder);
-
     if (result != AAUDIO_OK) {
-        LOGE("Failed to open AAudio stream: %s", AAudio_convertResultToText(result));
-        return false;
+        LOGE("Low-latency AAudio open failed: %s; retrying compatible mode",
+             AAudio_convertResultToText(result));
+        AAudioStreamBuilder_delete(builder);
+        builder = nullptr;
+        result = AAudio_createStreamBuilder(&builder);
+        if (result == AAUDIO_OK && builder) {
+            configureBuilder(builder, AAUDIO_PERFORMANCE_MODE_NONE);
+            result = AAudioStreamBuilder_openStream(builder, &audioStream_);
+        }
+    }
+    if (builder) AAudioStreamBuilder_delete(builder);
+
+    if (result != AAUDIO_OK || !audioStream_) {
+        LOGE("Failed to open compatible AAudio stream: %s",
+             AAudio_convertResultToText(result));
+        audioStream_ = nullptr;
+        return initJavaAudioFallback(static_cast<int>(sampleRate));
     }
 
     // Keep latency low; don't max out the buffer. Query the actual
@@ -177,13 +316,14 @@ bool LibretroHost::initAudio(double sampleRate) {
         LOGE("Failed to start AAudio stream: %s", AAudio_convertResultToText(result));
         AAudioStream_close(audioStream_);
         audioStream_ = nullptr;
-        return false;
+        return initJavaAudioFallback(static_cast<int>(sampleRate));
     }
 
     return true;
 }
 
 void LibretroHost::deinitAudio() {
+    deinitJavaAudioFallback();
     if (audioStream_) {
         AAudioStream_requestStop(audioStream_);
         AAudioStream_close(audioStream_);
@@ -403,7 +543,9 @@ int LibretroHost::loadGame(const std::string& romPath) {
 
     struct retro_system_av_info av_info;
     retro_get_system_av_info_fn(&av_info);
-    initAudio(av_info.timing.sample_rate);
+    if (!initAudio(av_info.timing.sample_rate)) {
+        LOGE("DOSBox audio initialization failed; continuing without audio");
+    }
 
     lastStatsTime_ = std::chrono::steady_clock::now();
     frameCount_.store(0);
@@ -572,7 +714,35 @@ bool LibretroHost::envCallback(unsigned cmd, void* data) {
             std::string key = var->key;
             LOGI("envCallback: Core requested variable: %s", key.c_str());
 
-            if (host.coreType_ == CoreType::AMIGA) {
+            if (host.coreType_ == CoreType::PS1) {
+                const std::string game = host.currentGamePath_;
+                const bool isGta2 = game.find("gta2") != std::string::npos ||
+                                    game.find("GTA2") != std::string::npos ||
+                                    game.find("gta 2") != std::string::npos ||
+                                    game.find("GTA 2") != std::string::npos;
+                if (key == "pcsx_rearmed_bios") {
+                    var->value = "auto"; // Uses a real BIOS when one is present in system/ps1.
+                    return true;
+                }
+                if (key == "pcsx_rearmed_frameskip") {
+                    var->value = "0";
+                    return true;
+                }
+                if (key == "pcsx_rearmed_gpu_thread_rendering") {
+                    var->value = "disabled";
+                    return true;
+                }
+                if (key == "pcsx_rearmed_async_cd") {
+                    var->value = "sync";
+                    return true;
+                }
+                if (key == "pcsx_rearmed_drc" && isGta2) {
+                    // GTA2 is stable with the interpreter path; this avoids a
+                    // device-specific dynarec crash at the cost of performance.
+                    var->value = "disabled";
+                    return true;
+                }
+            } else if (host.coreType_ == CoreType::AMIGA) {
                 if (key == "puae_model") {
                     var->value = "A500";
                     return true;
@@ -633,35 +803,57 @@ bool LibretroHost::envCallback(unsigned cmd, void* data) {
                     return true;
                 }
             } else if (host.coreType_ == CoreType::DOSBOX) {
-                bool isDune = host.currentGamePath_.find("dune") != std::string::npos ||
-                              host.currentGamePath_.find("DUNE") != std::string::npos;
+                // Dune II is controlled with a mouse. These options force
+                // DOSBox-Pure to consume the frontend's RETRO_DEVICE_MOUSE
+                // deltas instead of leaving Android touch handling disabled.
+                if (key == "dosbox_pure_mouse_input") {
+                    var->value = "true"; // Auto: virtual/direct mouse input.
+                    return true;
+                }
+                if (key == "dosbox_pure_mouse_speed_factor" ||
+                    key == "dosbox_pure_mouse_speed_factor_x") {
+                    var->value = "2.0";
+                    return true;
+                }
+                if (key == "dosbox_pure_auto_mapping") {
+                    var->value = "false"; // Do not override the direct mouse scheme.
+                    return true;
+                }
 
+                // Match the core sample rate to the Android output path and
+                // expose the Sound Blaster configuration Dune II expects.
+                if (key == "dosbox_pure_audiorate") {
+                    var->value = "48000";
+                    return true;
+                }
+                if (key == "dosbox_pure_sblaster_conf") {
+                    var->value = "A220 I7 D1 H5";
+                    return true;
+                }
+                if (key == "dosbox_pure_sblaster_type") {
+                    var->value = "sbpro2";
+                    return true;
+                }
+                if (key == "dosbox_pure_sblaster_adlib_mode") {
+                    var->value = "opl2";
+                    return true;
+                }
+                if (key == "dosbox_pure_volume_sb" ||
+                    key == "dosbox_pure_volume_adlib" ||
+                    key == "dosbox_pure_volume_speaker") {
+                    var->value = "1.0";
+                    return true;
+                }
                 if (key == "dosbox_pure_cycles") {
-                    if (isDune) {
-                        var->value = "386dx_33";
-                        return true;
-                    }
-                    var->value = "auto";
+                    var->value = "7800"; // 386DX/33-class speed is ideal for Dune II.
                     return true;
                 }
                 if (key == "dosbox_pure_memory_size") {
-                    if (isDune) {
-                        var->value = "4";
-                        return true;
-                    }
-                    var->value = "16";
+                    var->value = "4";
                     return true;
                 }
                 if (key == "dosbox_pure_svga") {
                     var->value = "svga_s3";
-                    return true;
-                }
-                if (key == "dosbox_pure_sblaster_type") {
-                    if (isDune) {
-                        var->value = "sbpro2";
-                        return true;
-                    }
-                    var->value = "sb16";
                     return true;
                 }
             }
@@ -679,8 +871,18 @@ bool LibretroHost::envCallback(unsigned cmd, void* data) {
 }
 
 void LibretroHost::videoCallback(const void* data, unsigned width, unsigned height, size_t pitch) {
-    if (!data) return;
+    // Cores may signal a duplicated frame with nullptr and may briefly report
+    // a zero-sized frame while changing video mode. Never divide by zero or
+    // dereference a non-frame pointer during those transitions.
+    if (!data || width == 0 || height == 0 || width > 2048 || height > 1024) return;
     auto& host = getInstance();
+    const size_t bytesPerPixel =
+        (host.pixelFormat_ == RETRO_PIXEL_FORMAT_XRGB8888) ? sizeof(uint32_t) : sizeof(uint16_t);
+    if (pitch < static_cast<size_t>(width) * bytesPerPixel ||
+        pitch > static_cast<size_t>(width) * bytesPerPixel * 8) {
+        LOGE("videoCallback: rejecting invalid frame pitch=%zu for %ux%u", pitch, width, height);
+        return;
+    }
     host.frameCount_.fetch_add(1);
 
     std::lock_guard<std::recursive_mutex> lock(host.coreMutex_);
@@ -791,53 +993,68 @@ void LibretroHost::audioCallback(int16_t left, int16_t right) {
 
 size_t LibretroHost::audioBatchCallback(const int16_t* data, size_t frames) {
     auto& host = getInstance();
-    if (!host.audioStream_) return 0;
+    if (!data || frames == 0) return 0;
+    if (host.usingJavaAudioFallback_) {
+        return host.writeJavaAudioFallback(data, frames);
+    }
+    if (!host.audioStream_) {
+        if (host.initJavaAudioFallback(static_cast<int>(host.lastSampleRate_))) {
+            return host.writeJavaAudioFallback(data, frames);
+        }
+        return 0;
+    }
 
     aaudio_stream_state_t state = AAudioStream_getState(host.audioStream_);
     if (state == AAUDIO_STREAM_STATE_DISCONNECTED) {
         LOGE("AAudio stream disconnected, attempting restart...");
-        host.initAudio(host.lastSampleRate_);
+        if (host.initAudio(host.lastSampleRate_) && host.usingJavaAudioFallback_) {
+            return host.writeJavaAudioFallback(data, frames);
+        }
         return 0;
     }
-
-    float vol = host.volume_.load();
-    if (vol < 0.99f) {
-        static std::vector<int16_t> volBuffer;
-        size_t samples = frames * 2;
-        if (volBuffer.size() < samples) volBuffer.resize(samples);
-
-        for (size_t i = 0; i < samples; i++) {
-            volBuffer[i] = static_cast<int16_t>(static_cast<float>(data[i]) * vol);
-        }
-
-        // Use a shorter write timeout to fail fast and allow the host
-        // to restart the stream if writes stall (500ms was too long).
-        aaudio_result_t result = AAudioStream_write(
-            host.audioStream_, volBuffer.data(), (int32_t)frames, 20000000); // 20ms
-        if (result >= 0) return (size_t)result;
-        if (result == AAUDIO_ERROR_TIMEOUT) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    if (state == AAUDIO_STREAM_STATE_STOPPED || state == AAUDIO_STREAM_STATE_PAUSED) {
+        const aaudio_result_t startResult = AAudioStream_requestStart(host.audioStream_);
+        if (startResult != AAUDIO_OK) {
+            LOGE("AAudio restart failed: %s", AAudio_convertResultToText(startResult));
             return 0;
         }
+    }
+
+    const int16_t* output = data;
+    const float volume = std::clamp(host.volume_.load(), 0.0f, 1.0f);
+    static std::vector<int16_t> volumeBuffer;
+    if (volume < 0.999f) {
+        const size_t samples = frames * 2;
+        if (volumeBuffer.size() < samples) volumeBuffer.resize(samples);
+        for (size_t i = 0; i < samples; ++i) {
+            const int scaled = static_cast<int>(static_cast<float>(data[i]) * volume);
+            volumeBuffer[i] = static_cast<int16_t>(std::clamp(scaled, -32768, 32767));
+        }
+        output = volumeBuffer.data();
+    }
+
+    // AAudio is allowed to accept fewer frames than requested. Keep writing
+    // the remaining PCM data, otherwise a partial write becomes an audible
+    // gap that can look like missing DOSBox sound on slower devices.
+    size_t written = 0;
+    while (written < frames) {
+        const aaudio_result_t result = AAudioStream_write(
+            host.audioStream_, output + written * 2,
+            static_cast<int32_t>(frames - written), 20000000); // 20 ms
+        if (result > 0) {
+            written += static_cast<size_t>(result);
+            continue;
+        }
+        if (result == 0 || result == AAUDIO_ERROR_TIMEOUT) {
+            break;
+        }
         LOGE("AAudio write error: %s", AAudio_convertResultToText(result));
-        host.initAudio(host.lastSampleRate_);
-        return 0;
+        if (host.initAudio(host.lastSampleRate_) && host.usingJavaAudioFallback_) {
+            return written + host.writeJavaAudioFallback(data + written * 2, frames - written);
+        }
+        break;
     }
-
-    // Blocking write to maintain sync with core.
-    // Use a shorter write timeout to avoid long blocking stalls.
-    aaudio_result_t result = AAudioStream_write(
-        host.audioStream_, data, (int32_t)frames, 20000000); // 20ms
-    if (result >= 0) return (size_t)result;
-
-    if (result == AAUDIO_ERROR_TIMEOUT) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        return 0;
-    }
-
-    LOGE("AAudio write error: %s", AAudio_convertResultToText(result));
-    host.initAudio(host.lastSampleRate_);
-    return 0;
+    return written;
 }
 
 void LibretroHost::inputPollCallback() {

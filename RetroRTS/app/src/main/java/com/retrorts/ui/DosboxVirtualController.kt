@@ -3,9 +3,22 @@ package com.retrorts.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -15,31 +28,58 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
- * Virtual gamepad for DOSBox games.
+ * Direct mouse controller for DOSBox-Pure.
  *
- * ROOT CAUSE (confirmed): this menu isn't listening for a mouse at all.
- * The DOSBox core maps RETRO_DEVICE_JOYPAD d-pad presses to emulated
- * keyboard arrow keys internally - that's why the old stick could nudge
- * the highlighted menu item (that was arrow-key navigation, not a cursor)
- * while a real INT33 mouse click did nothing, because the game/menu here
- * is keyboard-driven, not mouse-driven.
- *
- * Fix: stop emulating a mouse. Send real keyboard key events instead via
- * NativeEmulatorBridge.sendKeyCode(), which pushes an actual keydown+keyup
- * straight into the emulated PC (see LibretroHost::sendKeyCode /
- * keyboard_cb_ in libretro_bridge.cpp). This works regardless of whether
- * a given DOS game wants keyboard, joystick, or mouse input, so it's the
- * safest general-purpose control scheme for DOSBox menus and games.
+ * Dune II is mouse-driven. The left stick therefore sends real relative mouse
+ * deltas to libretro port 0 instead of relying on a gamepad-to-mouse mapper.
+ * The FIRE button holds the real left mouse button and also emits Enter as a
+ * fallback for the DOSBox-Pure start menu.
  */
 @Composable
 fun DosboxVirtualController(
     modifier: Modifier = Modifier,
-    repeatDelayMillis: Long = 300L, // delay before auto-repeat kicks in
-    repeatRateMillis: Long = 150L,  // time between repeated arrow taps while held
-    deadZone: Float = 0.35f         // stick must move this far off-center to register
+    mouseSpeed: Float = 1.5f,
+    deadZone: Float = 0.16f
 ) {
+    var stickDirection by remember { mutableStateOf(Offset.Zero) }
+    var mouseButtons by remember { mutableStateOf(0) }
+
+    // We use accumulators to allow for sub-pixel movement speeds.
+    // This makes fine-grained selection much easier by letting the cursor
+    // move slower than 1 pixel per frame at low stick deflection.
+    LaunchedEffect(stickDirection, mouseButtons) {
+        if (abs(stickDirection.x) < deadZone && abs(stickDirection.y) < deadZone) {
+            return@LaunchedEffect
+        }
+        
+        var accX = 0f
+        var accY = 0f
+        
+        while (abs(stickDirection.x) >= deadZone || abs(stickDirection.y) >= deadZone) {
+            // Apply a cubic curve (x^3) to the input.
+            // This makes the "slow zone" around the center much larger,
+            // so you have to really push the stick to get to higher speeds.
+            val curveX = stickDirection.x * stickDirection.x * stickDirection.x
+            val curveY = stickDirection.y * stickDirection.y * stickDirection.y
+            
+            accX += curveX * mouseSpeed
+            accY += curveY * mouseSpeed
+            
+            val dx = accX.toInt()
+            val dy = accY.toInt()
+            
+            if (dx != 0 || dy != 0) {
+                DosboxBridge.updateMouse(mouseButtons, dx, dy)
+                accX -= dx
+                accY -= dy
+            }
+            delay(16L)
+        }
+    }
+
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -47,17 +87,18 @@ fun DosboxVirtualController(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.Bottom
     ) {
-        // Left: directional stick -> arrow key taps (with auto-repeat while held)
         Box(Modifier.padding(bottom = 16.dp)) {
-            DirectionalStick(
+            DosboxMouseStick(
                 modifier = Modifier.size(140.dp),
-                repeatDelayMillis = repeatDelayMillis,
-                repeatRateMillis = repeatRateMillis,
-                deadZone = deadZone
+                deadZone = deadZone,
+                onDirectionChanged = { stickDirection = it },
+                onReleased = {
+                    stickDirection = Offset.Zero
+                    DosboxBridge.updateMouse(mouseButtons, 0, 0)
+                }
             )
         }
 
-        // Right: Fire (Enter) and Back (Escape)
         Column(
             verticalArrangement = Arrangement.spacedBy(16.dp),
             modifier = Modifier.padding(bottom = 16.dp)
@@ -67,6 +108,9 @@ fun DosboxVirtualController(
                 color = Color(0xFF8B2020),
                 modifier = Modifier.size(88.dp),
                 onPressed = { pressed ->
+                    mouseButtons = if (pressed) DosboxMouse.LEFT_BUTTON else 0
+                    DosboxBridge.updateMouse(mouseButtons, 0, 0)
+                    // This also selects items in the DOSBox-Pure launcher menu.
                     if (pressed) NativeEmulatorBridge.sendKeyCode(DosKeys.RETURN)
                 }
             )
@@ -82,38 +126,25 @@ fun DosboxVirtualController(
     }
 }
 
-/** libretro RETROK_* keysym values used here (see libretro.h). */
+private object DosboxMouse {
+    const val LEFT_BUTTON = 1
+}
+
+/** libretro RETROK keysyms used for DOSBox-Pure menu fallback. */
 private object DosKeys {
     const val RETURN = 13
     const val ESCAPE = 27
-    const val UP = 273
-    const val DOWN = 274
-    const val RIGHT = 275
-    const val LEFT = 276
 }
 
 @Composable
-private fun DirectionalStick(
+private fun DosboxMouseStick(
     modifier: Modifier = Modifier,
-    repeatDelayMillis: Long,
-    repeatRateMillis: Long,
-    deadZone: Float
+    deadZone: Float,
+    onDirectionChanged: (Offset) -> Unit,
+    onReleased: () -> Unit
 ) {
     var stickOffset by remember { mutableStateOf(Offset.Zero) }
-    var activeKey by remember { mutableStateOf<Int?>(null) }
     val maxRadius = 100f
-
-    // Fires the current direction immediately, then auto-repeats it as long
-    // as the stick stays deflected past the dead zone in the same direction.
-    LaunchedEffect(activeKey) {
-        val key = activeKey ?: return@LaunchedEffect
-        NativeEmulatorBridge.sendKeyCode(key)
-        delay(repeatDelayMillis)
-        while (activeKey == key) {
-            NativeEmulatorBridge.sendKeyCode(key)
-            delay(repeatRateMillis)
-        }
-    }
 
     Box(
         modifier = modifier
@@ -135,20 +166,21 @@ private fun DirectionalStick(
                                 rawOffset
                             }
 
-                            val nx = stickOffset.x / maxRadius
-                            val ny = stickOffset.y / maxRadius
-                            activeKey = when {
-                                abs(nx) < deadZone && abs(ny) < deadZone -> null
-                                abs(nx) >= abs(ny) && nx > 0 -> DosKeys.RIGHT
-                                abs(nx) >= abs(ny) && nx < 0 -> DosKeys.LEFT
-                                ny > 0 -> DosKeys.DOWN
-                                else -> DosKeys.UP
-                            }
-
+                            val direction = Offset(
+                                x = stickOffset.x / maxRadius,
+                                y = stickOffset.y / maxRadius
+                            )
+                            onDirectionChanged(
+                                if (abs(direction.x) < deadZone && abs(direction.y) < deadZone) {
+                                    Offset.Zero
+                                } else {
+                                    direction
+                                }
+                            )
                             event.changes.forEach { it.consume() }
                         } while (event.changes.any { it.pressed })
                         stickOffset = Offset.Zero
-                        activeKey = null
+                        onReleased()
                     }
                 }
             },
@@ -156,7 +188,7 @@ private fun DirectionalStick(
     ) {
         Box(
             Modifier
-                .offset { IntOffset(stickOffset.x.toInt(), stickOffset.y.toInt()) }
+                .offset { IntOffset(stickOffset.x.roundToInt(), stickOffset.y.roundToInt()) }
                 .size(50.dp)
                 .background(Color(0xAAFFFFFF), CircleShape)
                 .border(2.dp, Color.White, CircleShape)

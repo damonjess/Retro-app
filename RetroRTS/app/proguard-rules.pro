@@ -6,6 +6,9 @@
     native <methods>;
 }
 
+# Native audio fallback — JNI resolves this class by name
+-keep class com.retrorts.ui.NativeAudioFallback { *; }
+
 # Native Emulator Bridge
 -keep class com.retrorts.ui.NativeEmulatorBridge {
     native <methods>;

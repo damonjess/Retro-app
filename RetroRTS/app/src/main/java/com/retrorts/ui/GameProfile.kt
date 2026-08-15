@@ -134,6 +134,17 @@ data class GameProfile(
             machine = "svga_s3",
         )
 
+        fun presetDuneIIDOS() = GameProfile(
+            gameId = "dune_ii_dos",
+            title = "Dune II: The Building of a Dynasty",
+            os = "MS-DOS",
+            cycles = 5000,
+            frameCap = 60,
+            memMb = 4,
+            mixerRate = 22050,
+            machine = "vga",
+        )
+
         fun presetDune2000Win98() = GameProfile(
             gameId = "dune_2000_win98",
             title = "Dune 2000",
@@ -273,6 +284,7 @@ object GameProfileStore {
             val dir = File(ROOT)
             if (!dir.exists()) dir.mkdirs()
             writeIfMissing(GameProfile.presetRedAlert95())
+            writeIfMissing(GameProfile.presetDuneIIDOS())
             writeIfMissing(GameProfile.presetDune2000Win98())
             writeIfMissing(GameProfile.presetAmigaA500())
             writeIfMissing(GameProfile.presetDune1992Amiga())
@@ -301,8 +313,8 @@ object GameProfileStore {
     private fun gameIdForName(key: String): String = when {
         "red alert" in key || "command" in key || "c&c" in key -> "cnc_red_alert_win95"
         "dune 2000" in key -> "dune_2000_win98"
+        "dune ii" in key || "dune 2" in key || key == "dune" -> "dune_ii_dos"
         ("dune" in key && ("1992" in key || "adventure" in key || "disk 1" in key)) -> "dune_1992_amiga"
-        "dune ii" in key || "dune 2" in key || key == "dune" -> "dune_ii_amiga"
         "amiga" in key || "a500" in key -> "amiga_a500_demo"
         "dsi" in key || "nintendo ds" in key -> "nintendo_dsi_demo"
         "ps1" in key || "playstation" in key || "psx" in key -> "ps1_game_demo"
@@ -312,6 +324,7 @@ object GameProfileStore {
 
     private fun presetForGameId(gameId: String): GameProfile = when (gameId) {
         "cnc_red_alert_win95" -> GameProfile.presetRedAlert95()
+        "dune_ii_dos" -> GameProfile.presetDuneIIDOS()
         "dune_1992_amiga" -> GameProfile.presetDune1992Amiga()
         "dune_ii_amiga" -> GameProfile.presetDuneIIAmiga()
         "amiga_a500_demo" -> GameProfile.presetAmigaA500()

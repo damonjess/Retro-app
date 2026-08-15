@@ -95,8 +95,12 @@ private:
     std::mutex queueMutex_;
 
     AAudioStream* audioStream_ = nullptr;
+    bool usingJavaAudioFallback_ = false;
     bool initAudio(double sampleRate);
     void deinitAudio();
+    bool initJavaAudioFallback(int sampleRate);
+    void deinitJavaAudioFallback();
+    size_t writeJavaAudioFallback(const int16_t* data, size_t frames);
 
     // Stats
     std::atomic<float> currentFps_{0.0f};

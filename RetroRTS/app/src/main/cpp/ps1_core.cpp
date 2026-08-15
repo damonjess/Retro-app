@@ -14,8 +14,10 @@
 namespace retrorts::ps1 {
 namespace {
 
-constexpr const char* kBiosDir  = "/sdcard/RetroRTS/system/ps1";
-constexpr const char* kBiosFile = "scph1001.bin";   // most compatible BIOS
+constexpr const char* kBiosDir = "/sdcard/RetroRTS/system/ps1";
+constexpr const char* kKnownBiosFiles[] = {
+    "PSXONPSP660.bin", "scph101.bin", "scph7001.bin", "scph5501.bin", "scph1001.bin"
+};
 
 bool fileExists(const std::string& p) {
     return std::ifstream(p, std::ios::binary).good();
@@ -30,6 +32,14 @@ std::string toLower(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(),
         [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
     return s;
+}
+
+std::string findValidBios() {
+    for (const char* filename : kKnownBiosFiles) {
+        const std::string candidate = std::string(kBiosDir) + "/" + filename;
+        if (fileExists(candidate) && fileSize(candidate) == 524288L) return candidate;
+    }
+    return "";
 }
 
 bool IsKnownMultiTrackGame(const std::string& path) {
@@ -106,19 +116,12 @@ Ps1LaunchResult LaunchPs1Game(const std::string& discPath, const std::string& ca
         return {false, "PS1 launch failed: disc file not found: " + discPath, ""};
 
     // ── Check BIOS ───────────────────────────────────────────────────────
-    const std::string biosPath = std::string(kBiosDir) + "/" + kBiosFile;
-    bool hasBios = fileExists(biosPath);
-
-    if (hasBios) {
-        const long biosSize = fileSize(biosPath);
-        if (biosSize != 524288L) {
-            LOGE("BIOS file exists but size is wrong: %ld", biosSize);
-            hasBios = false; // Fallback to HLE if BIOS is corrupt
-        }
-    }
-
+    // PCSX-ReARMed supports several standard retail BIOS names. Restrict the
+    // test to 512 KiB images so corrupt files cannot be mistaken for firmware.
+    const std::string biosPath = findValidBios();
+    const bool hasBios = !biosPath.empty();
     if (!hasBios) {
-        LOGI("BIOS not found, using PS1 HLE (High Level Emulation)");
+        LOGE("No valid retail PS1 BIOS found; GTA2 will use HLE and may be unstable");
     }
 
     // ── Resolve to .cue (generate one if only .bin provided) ────────────
@@ -127,25 +130,35 @@ Ps1LaunchResult LaunchPs1Game(const std::string& discPath, const std::string& ca
         cuePath = discPath;
         // Make sure the .bin it references exists (basic check)
         std::ifstream cueFile(discPath);
+        if (!cueFile.good())
+            return {false, "PS1 launch failed: cannot read .cue file", ""};
+
+        int referencedFiles = 0;
+        int declaredTracks = 0;
         std::string line;
         while (std::getline(cueFile, line)) {
-            if (toLower(line).find("file") != std::string::npos) {
-                // Extract filename/path from:  FILE "name.bin" BINARY
-                auto q1 = line.find('"');
-                auto q2 = line.rfind('"');
-                if (q1 != std::string::npos && q2 > q1) {
-                    std::string binRef = line.substr(q1 + 1, q2 - q1 - 1);
-                    // Check if it's a relative ref or absolute
-                    if (binRef.find('/') == std::string::npos) {
-                        std::string dir = discPath.substr(0, discPath.rfind('/') + 1);
-                        if (!fileExists(dir + binRef))
-                            return {false, "PS1 launch failed: .cue references missing file: " + binRef, ""};
-                    } else {
-                         if (!fileExists(binRef))
-                            return {false, "PS1 launch failed: .cue references missing file: " + binRef, ""};
-                    }
-                }
+            const std::string lowerLine = toLower(line);
+            if (lowerLine.find("track ") != std::string::npos) ++declaredTracks;
+            if (lowerLine.find("file") != std::string::npos) {
+                // Extract filename/path from: FILE "name.bin" BINARY.
+                const auto q1 = line.find('"');
+                const auto q2 = line.rfind('"');
+                if (q1 == std::string::npos || q2 <= q1)
+                    return {false, "PS1 launch failed: malformed FILE entry in .cue", ""};
+
+                const std::string binRef = line.substr(q1 + 1, q2 - q1 - 1);
+                const std::string dir = discPath.substr(0, discPath.rfind('/') + 1);
+                const std::string resolvedRef =
+                    (binRef.find('/') == std::string::npos) ? dir + binRef : binRef;
+                if (!fileExists(resolvedRef))
+                    return {false, "PS1 launch failed: .cue references missing file: " + binRef, ""};
+                ++referencedFiles;
             }
+        }
+        if (referencedFiles == 0 || declaredTracks == 0)
+            return {false, "PS1 launch failed: .cue contains no valid FILE/TRACK entries", ""};
+        if (IsKnownMultiTrackGame(discPath) && declaredTracks < 2) {
+            LOGE("GTA2 cue has only one track; game audio/boot may be incomplete: %s", discPath.c_str());
         }
     } else if (e == ".bin" || e == ".img") {
         cuePath = generateCue(discPath, cacheDir);
