@@ -77,6 +77,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.lifecycleScope
+import com.retrorts.ui.DosboxVirtualController
 import com.retrorts.ui.AmigaBridge
 import com.retrorts.ui.AmigaDiskSwapControls
 import com.retrorts.ui.AmigaUtils
@@ -1634,45 +1635,42 @@ private fun DosboxPlayScreen(game: GameEntry, settings: SettingsState, onExit: (
                 .navigationBarsPadding()
                 .padding(bottom = 16.dp)
         ) {
-            if (game.consoleType == ConsoleType.AMIGA) {
-                AmigaVirtualController(
-                    onMouseClick = { button, down ->
-                        currentMouseButtons = if (down) {
-                            currentMouseButtons or button
-                        } else {
-                            currentMouseButtons and button.inv()
+            when (game.consoleType) {
+                ConsoleType.AMIGA -> {
+                    AmigaVirtualController(
+                        onMouseClick = { button, down ->
+                            currentMouseButtons = if (down) {
+                                currentMouseButtons or button
+                            } else {
+                                currentMouseButtons and button.inv()
+                            }
                         }
-                    }
-                )
-            } else {
-                VirtualGamepad(
-                    consoleType = game.consoleType,
-                    onMaskChange = { currentMask = it },
-                    onMouseClick = { button, down ->
-                        currentMouseButtons = if (down) {
-                            currentMouseButtons or button
-                        } else {
-                            currentMouseButtons and button.inv()
-                        }
-                    },
-                    onAnalogMove = { x, y ->
-                        val sensitivity = settings.sensitivity
-                        if (game.consoleType == ConsoleType.DOSBOX) {
-                            // Send analog stick as joystick axes to DOSBox (port 1)
-                            // This lets the libretro core synthesize mouse deltas reliably
-                            val valX = (x * 32767f * sensitivity).toInt().coerceIn(-32768, 32767)
-                            val valY = (y * 32767f * sensitivity).toInt().coerceIn(-32768, 32767)
-                            DosboxBridge.updateAnalog(1, 0, 0, valX)
-                            DosboxBridge.updateAnalog(1, 0, 1, valY)
-                        } else {
+                    )
+                }
+                ConsoleType.DOSBOX -> {
+                    DosboxVirtualController()
+                }
+                else -> {
+                    VirtualGamepad(
+                        consoleType = game.consoleType,
+                        onMaskChange = { currentMask = it },
+                        onMouseClick = { button, down ->
+                            currentMouseButtons = if (down) {
+                                currentMouseButtons or button
+                            } else {
+                                currentMouseButtons and button.inv()
+                            }
+                        },
+                        onAnalogMove = { x, y ->
+                            val sensitivity = settings.sensitivity
                             // Analog X/Y range -32768 to 32767
                             val valX = (x * 32767f * sensitivity).toInt().coerceIn(-32768, 32767)
                             val valY = (y * 32767f * sensitivity).toInt().coerceIn(-32768, 32767)
                             NativeEmulatorBridge.updateAnalog(0, 0, 0, valX) // port 0, Left stick, X
                             NativeEmulatorBridge.updateAnalog(0, 0, 1, valY) // port 0, Left stick, Y
                         }
-                    }
-                )
+                    )
+                }
             }
         }
     }
