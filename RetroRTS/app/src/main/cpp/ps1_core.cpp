@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <dirent.h>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -34,12 +35,55 @@ std::string toLower(std::string s) {
     return s;
 }
 
+bool ensureCoreBiosName(const std::string& sourcePath, const char* coreFileName) {
+    const std::string targetPath = std::string(kBiosDir) + "/" + coreFileName;
+    if (sourcePath == targetPath || (fileExists(targetPath) && fileSize(targetPath) == 524288L)) {
+        return true;
+    }
+
+    // The UI accepts upper-case filenames (e.g. SCPH1001.BIN), while the
+    // bundled PCSX-ReARMed core searches conventional lower-case names.
+    std::ifstream source(sourcePath, std::ios::binary);
+    std::ofstream target(targetPath, std::ios::binary | std::ios::trunc);
+    if (!source.good() || !target.good()) return false;
+    target << source.rdbuf();
+    return target.good() && fileSize(targetPath) == 524288L;
+}
+
 std::string findValidBios() {
+    // Keep the conventional lower-case fast path.
     for (const char* filename : kKnownBiosFiles) {
         const std::string candidate = std::string(kBiosDir) + "/" + filename;
         if (fileExists(candidate) && fileSize(candidate) == 524288L) return candidate;
     }
-    return "";
+
+    // Android shared storage is case-sensitive. The BIOS screen can show an
+    // uppercase SCPH1001.BIN, so match known retail names case-insensitively.
+    DIR* directory = opendir(kBiosDir);
+    if (!directory) return "";
+    std::string result;
+    while (const dirent* entry = readdir(directory)) {
+        const std::string actualName(entry->d_name);
+        const std::string lowerName = toLower(actualName);
+        for (const char* filename : kKnownBiosFiles) {
+            if (lowerName == filename) {
+                const std::string candidate = std::string(kBiosDir) + "/" + actualName;
+                if (fileSize(candidate) == 524288L) {
+                    if (ensureCoreBiosName(candidate, filename)) {
+                        result = std::string(kBiosDir) + "/" + filename;
+                    } else {
+                        // Continue with the original path for diagnostics; the
+                        // core may still discover it on filesystems that ignore case.
+                        result = candidate;
+                    }
+                    break;
+                }
+            }
+        }
+        if (!result.empty()) break;
+    }
+    closedir(directory);
+    return result;
 }
 
 bool IsKnownMultiTrackGame(const std::string& path) {

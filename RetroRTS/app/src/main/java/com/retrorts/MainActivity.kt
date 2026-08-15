@@ -91,6 +91,7 @@ import com.retrorts.ui.NativeEmulatorBridge
 import com.retrorts.ui.RetroButton
 import com.retrorts.ui.RetroCard
 import com.retrorts.ui.Ps2SetupPanel
+import com.retrorts.ui.Ps2BiosStatusPanel
 import com.retrorts.ui.ScanlineOverlay
 import com.retrorts.ui.downloads.DirectImportScreen
 import com.retrorts.ui.theme.RetroTheme
@@ -1227,6 +1228,10 @@ private fun BiosTab() {
                         }
                     }
                 }
+            }
+
+            item {
+                Ps2BiosStatusPanel(modifier = Modifier.padding(vertical = 8.dp))
             }
 
             // Create Xbox system directory

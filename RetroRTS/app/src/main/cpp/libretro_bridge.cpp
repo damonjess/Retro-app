@@ -1,6 +1,7 @@
 #include "libretro_bridge.h"
 #include <jni.h>
 #include <cstring>
+#include <cstdint>
 #include <signal.h>
 #ifdef __ANDROID__
 #include <unwind.h>
@@ -882,7 +883,12 @@ void LibretroHost::videoCallback(const void* data, unsigned width, unsigned heig
     // Cores may signal a duplicated frame with nullptr and may briefly report
     // a zero-sized frame while changing video mode. Never divide by zero or
     // dereference a non-frame pointer during those transitions.
-    if (!data || width == 0 || height == 0 || width > 2048 || height > 1024) return;
+    // RETRO_HW_FRAME_BUFFER_VALID is represented by the non-dereferenceable
+    // pointer value -1. PCSX-ReARMed can emit it while changing GTA2 display
+    // modes; this host renders CPU frames only, so ignore it safely.
+    constexpr uintptr_t kHardwareFrameBufferValid = static_cast<uintptr_t>(-1);
+    if (data == reinterpret_cast<const void*>(kHardwareFrameBufferValid) ||
+        !data || width == 0 || height == 0 || width > 2048 || height > 1024) return;
     auto& host = getInstance();
     const size_t bytesPerPixel =
         (host.pixelFormat_ == RETRO_PIXEL_FORMAT_XRGB8888) ? sizeof(uint32_t) : sizeof(uint16_t);
