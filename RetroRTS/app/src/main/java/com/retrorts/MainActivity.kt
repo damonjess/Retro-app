@@ -1381,8 +1381,6 @@ private fun DosboxPlayScreen(game: GameEntry, settings: SettingsState, onExit: (
     val amigaDiskSet = remember(game.filePath, game.consoleType) {
         if (game.consoleType == ConsoleType.AMIGA) AmigaUtils.diskSetFor(game.filePath) else null
     }
-    var numDisks by remember { mutableStateOf(0) }
-    var currentDisk by remember { mutableStateOf(0) }
     var currentMask by remember { mutableStateOf(0) }
     val mouseButtonsState = remember { mutableStateOf(0) }
     var currentMouseButtons by mouseButtonsState
@@ -1419,12 +1417,6 @@ private fun DosboxPlayScreen(game: GameEntry, settings: SettingsState, onExit: (
         // Apply stable audio settings
         DosboxBridge.setFrameCap(60)
         DosboxBridge.setVolume(settings.volume)
-
-        if (game.consoleType == ConsoleType.AMIGA) {
-            delay(500) // let the core finish registering its disk control interface
-            numDisks = NativeEmulatorBridge.getNumDisks()
-            currentDisk = NativeEmulatorBridge.getCurrentDiskIndex()
-        }
         
         while (true) {
             delay(1000L) // Polling interval
@@ -1873,5 +1865,3 @@ private fun GamepadButton(
         }
     }
 }
-
-
