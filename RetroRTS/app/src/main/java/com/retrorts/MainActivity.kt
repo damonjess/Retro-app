@@ -1375,8 +1375,12 @@ private fun StoragePath(label: String, path: String) {
 private fun DosboxPlayScreen(game: GameEntry, settings: SettingsState, onExit: () -> Unit) {
     var showExitDialog by remember { mutableStateOf(false) }
     var showKeyboardDialog by remember { mutableStateOf(false) }
+    var showAmigaDiskDialog by remember(game.filePath) { mutableStateOf(false) }
     var keyboardText by remember { mutableStateOf("") }
     var statusMsg by remember { mutableStateOf("") }
+    val amigaDiskSet = remember(game.filePath, game.consoleType) {
+        if (game.consoleType == ConsoleType.AMIGA) AmigaUtils.diskSetFor(game.filePath) else null
+    }
     var numDisks by remember { mutableStateOf(0) }
     var currentDisk by remember { mutableStateOf(0) }
     var currentMask by remember { mutableStateOf(0) }
@@ -1475,6 +1479,28 @@ private fun DosboxPlayScreen(game: GameEntry, settings: SettingsState, onExit: (
                 )
             },
             containerColor = RetroPanel
+        )
+    }
+
+    if (showAmigaDiskDialog && amigaDiskSet?.isMultiDisk == true) {
+        AlertDialog(
+            onDismissRequest = { showAmigaDiskDialog = false },
+            confirmButton = {
+                RetroButton(
+                    onClick = { showAmigaDiskDialog = false },
+                    text = "BACK",
+                    color = RetroNeonCyan,
+                )
+            },
+            title = {
+                Text(
+                    "AMIGA DISK SWAP",
+                    fontFamily = RetroFontFamily,
+                    color = RetroNeonMagenta,
+                )
+            },
+            text = { AmigaDiskSwapControls(diskSet = amigaDiskSet) },
+            containerColor = RetroPanel,
         )
     }
 
@@ -1577,6 +1603,24 @@ private fun DosboxPlayScreen(game: GameEntry, settings: SettingsState, onExit: (
                 }
                 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (game.consoleType == ConsoleType.AMIGA && amigaDiskSet?.isMultiDisk == true) {
+                        IconButton(
+                            onClick = { showAmigaDiskDialog = true },
+                            modifier = Modifier
+                                .background(RetroPanel, RoundedCornerShape(2.dp))
+                                .border(1.dp, RetroNeonMagenta.copy(alpha = 0.7f), RoundedCornerShape(2.dp))
+                                .size(36.dp)
+                        ) {
+                            Text(
+                                "DSK",
+                                color = RetroNeonMagenta,
+                                fontFamily = RetroFontFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 9.sp,
+                            )
+                        }
+                    }
+
                     // Utility buttons
                     IconButton(
                         onClick = {
@@ -1623,18 +1667,6 @@ private fun DosboxPlayScreen(game: GameEntry, settings: SettingsState, onExit: (
                         Text("X", color = Color.White, fontFamily = RetroFontFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                     }
                 }
-            }
-
-            // Amiga Disk Swap Overlay (Below HUD row)
-            if (game.consoleType == ConsoleType.AMIGA) {
-                val diskSet = remember(game.filePath) { AmigaUtils.diskSetFor(game.filePath) }
-                AmigaDiskSwapControls(
-                    diskSet = diskSet,
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(top = 100.dp)
-                        .padding(horizontal = 16.dp)
-                )
             }
 
         // ── Virtual Gamepad (Bottom) ──────────────────────────────────

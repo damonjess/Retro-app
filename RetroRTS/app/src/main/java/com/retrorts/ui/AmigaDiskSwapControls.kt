@@ -25,44 +25,36 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 
 /**
- * In-game Amiga disk selector. Add this to the existing gameplay overlay after
- * [AmigaBridge.startAmiga] succeeds. It renders every discovered disk rather
- * than a static multi-disk limitation message.
+ * Selects the currently inserted image in an Amiga multi-disk playlist.
+ * The native bridge performs Libretro's required eject -> select -> insert
+ * sequence, so taps on Disk 2 or Disk 3 are safe while a game is running.
  */
 @Composable
 fun AmigaDiskSwapControls(
     diskSet: AmigaUtils.DiskSet,
     modifier: Modifier = Modifier,
 ) {
-    // If not a multi-disk set, we still want to show the overlay if the core says it has disks
-    val coreDiskCount = AmigaBridge.diskCount()
-    if (!diskSet.isMultiDisk && coreDiskCount <= 1) {
-        // Maybe show a hidden debug trigger or just return
-        // For now, let's log it
-        LaunchedEffect(Unit) {
-            android.util.Log.d("AmigaDiskSwap", "Hiding controls: diskSet.size=${diskSet.diskPaths.size}, coreCount=$coreDiskCount")
-        }
-        return
-    }
+    // A single image never needs a selector. A detected numbered set must stay
+    // visible even while the core is still registering its disk interface.
+    if (!diskSet.isMultiDisk) return
 
-    var activeDiskNumber by remember(diskSet.diskPaths) {
-        mutableIntStateOf((AmigaBridge.activeDiskIndex() + 1).coerceIn(1, if (coreDiskCount > 0) coreDiskCount else diskSet.diskPaths.size))
-    }
-    var diskControlReady by remember { mutableStateOf(AmigaBridge.isDiskControlAvailable()) }
-    var statusText by remember { mutableStateOf("Preparing disk controls…") }
+    var activeDiskNumber by remember(diskSet.diskPaths) { mutableIntStateOf(1) }
+    var diskControlReady by remember(diskSet.diskPaths) { mutableStateOf(false) }
+    var statusText by remember(diskSet.diskPaths) { mutableStateOf("Preparing disk controls…") }
 
     LaunchedEffect(diskSet.diskPaths) {
-        repeat(20) {
-            diskControlReady = AmigaBridge.isDiskControlAvailable()
-            if (diskControlReady) {
+        repeat(32) {
+            if (AmigaBridge.isDiskControlAvailable()) {
+                val coreDiskCount = AmigaBridge.diskCount()
                 activeDiskNumber = (AmigaBridge.activeDiskIndex() + 1)
-                    .coerceIn(1, diskSet.diskPaths.size)
+                    .coerceIn(1, minOf(diskSet.diskPaths.size, coreDiskCount.coerceAtLeast(1)))
+                diskControlReady = true
                 statusText = "Disk $activeDiskNumber inserted"
                 return@LaunchedEffect
             }
             delay(250)
         }
-        statusText = "Disk controls are unavailable in this core session."
+        statusText = "Disk control is still loading. Close and reopen this panel in a moment."
     }
 
     Surface(
@@ -71,11 +63,11 @@ fun AmigaDiskSwapControls(
         tonalElevation = 3.dp,
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
-                text = "Amiga disks",
+                text = "INSERT AMIGA DISK",
                 style = MaterialTheme.typography.labelLarge,
             )
             Row(
@@ -85,17 +77,18 @@ fun AmigaDiskSwapControls(
                 diskSet.diskPaths.forEachIndexed { index, _ ->
                     val diskNumber = index + 1
                     val isActive = diskNumber == activeDiskNumber
-                    val onClick = {
+                    val insertDisk = {
                         if (AmigaBridge.swapToDisk(diskNumber)) {
                             activeDiskNumber = diskNumber
                             statusText = "Disk $diskNumber inserted"
                         } else {
-                            statusText = "Unable to insert Disk $diskNumber"
+                            statusText = "Unable to insert Disk $diskNumber. Wait a moment and try again."
                         }
                     }
+
                     if (isActive) {
                         Button(
-                            onClick = onClick,
+                            onClick = insertDisk,
                             enabled = diskControlReady,
                             colors = ButtonDefaults.buttonColors(),
                         ) {
@@ -103,10 +96,10 @@ fun AmigaDiskSwapControls(
                         }
                     } else {
                         OutlinedButton(
-                            onClick = onClick,
+                            onClick = insertDisk,
                             enabled = diskControlReady,
                         ) {
-                            Text("Disk $diskNumber")
+                            Text("Insert Disk $diskNumber")
                         }
                     }
                 }
@@ -116,21 +109,6 @@ fun AmigaDiskSwapControls(
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            // Added debug info
-            Text(
-                text = "Debug: detected=${diskSet.diskPaths.size} core=$coreDiskCount",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.error.copy(alpha = 0.5f)
-            )
         }
     }
 }
-
-/**
- * Recommended gameplay-overlay integration:
- *
- * ```kotlin
- * val diskSet = remember(game.filePath) { AmigaUtils.diskSetFor(game.filePath) }
- * if (diskSet.isMultiDisk) AmigaDiskSwapControls(diskSet)
- * ```
- */

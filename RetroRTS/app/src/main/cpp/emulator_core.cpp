@@ -70,13 +70,25 @@ std::string LaunchGame(const std::string& console,
 
     // ── DOSBOX ───────────────────────────────────────────────────────────
     else if (c == "DOSBOX" || c == "DOS") {
+        std::string lowerRomPath = romPath;
+        std::transform(lowerRomPath.begin(), lowerRomPath.end(), lowerRomPath.begin(), [](unsigned char ch) {
+            return static_cast<char>(std::tolower(ch));
+        });
+        if (lowerRomPath.ends_with(".zip") || lowerRomPath.ends_with(".7z") ||
+            lowerRomPath.ends_with(".rar")) {
+            return "ERROR: DOSBox cannot run a compressed archive. Extract this game first, then "
+                   "launch its folder or its .exe/.bat file. For Dune III, extract "
+                   "Dune-III_DOS_RU.zip to /storage/emulated/0/RetroRTS/Games/DOSBox/Dune-III/ "
+                   "and press Scan again.";
+        }
+
         std::string gameDir = romPath;
-        size_t lastSlash = romPath.rfind('/');
-        if (lastSlash != std::string::npos) {
-            std::string ext = romPath.substr(romPath.rfind('.'));
-            if (ext == ".exe" || ext == ".bat" || ext == ".com" || ext == ".conf") {
-                gameDir = romPath.substr(0, lastSlash);
-            }
+        const size_t lastSlash = romPath.rfind('/');
+        const size_t lastDot = romPath.rfind('.');
+        const std::string ext = lastDot == std::string::npos ? "" : lowerRomPath.substr(lastDot);
+        if (lastSlash != std::string::npos &&
+            (ext == ".exe" || ext == ".bat" || ext == ".com" || ext == ".conf")) {
+            gameDir = romPath.substr(0, lastSlash);
         }
 
         std::string configPath = cacheDir + "/dosbox_auto.conf";
@@ -86,14 +98,14 @@ memsize=16
 
 [cpu]
 core=dynamic
-# Dune II is most stable at a fixed 386DX/33-class speed. Dynamic cycles
-# can swing under Android scheduling load and cause uneven game/audio pacing.
-cycles=fixed 7800
+# Dune II does not need an aggressive 386DX/33 profile. A modest fixed
+# budget leaves Android enough time to drain audio without slowing gameplay.
+cycles=fixed 6000
 
 [mixer]
 rate=48000
-blocksize=1024
-prebuffer=60
+blocksize=512
+prebuffer=35
 
 [render]
 frameskip=0
@@ -118,6 +130,7 @@ joysticktype=auto
 @echo off
 mount c ")" + gameDir + R"("
 c:
+set BLASTER=A220 I7 D1 H5 T6
 if exist dune2000.exe dune2000.exe
 if exist ra95.exe ra95.exe
 if exist c&c.exe c&c.exe

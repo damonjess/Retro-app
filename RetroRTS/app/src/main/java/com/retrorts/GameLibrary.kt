@@ -76,76 +76,65 @@ object GameLibrary {
     }
 
     fun scanGamesFolder(context: Context): List<GameEntry> {
-        val roots = mutableListOf(
+        val externalRoot = android.os.Environment.getExternalStorageDirectory()
+        val roots = listOf(
             File(context.getExternalFilesDir(null), "Imported"),
-            File(android.os.Environment.getExternalStorageDirectory(), "RetroRTS/Games")
+            File(externalRoot, "RetroRTS/Games"),
+            // Support older installs that created this directory with a lower-case name.
+            File(externalRoot, "RetroRTS/games")
+        ).distinctBy { it.absolutePath }
+
+        // Include all formats advertised by the app. PS1/PS2 images are often
+        // CHD/PBP/CSO rather than only BIN/CUE, which the previous scan skipped.
+        val validExts = setOf(
+            "bin", "cue", "img", "iso", "pbp", "chd", "cso", "ecm", "ccd",
+            "exe", "com", "bat", "conf",
+            "adf", "hdf", "dms", "ipf",
+            "nds", "dsi", "srl", "xbe"
         )
-        
-        val validExts = setOf("bin","cue","img","iso","exe","com","bat","adf","hdf","nds","dsi","xbe")
+        val smallValidFiles = setOf("bat", "com", "cue", "ccd", "conf")
         val found = mutableListOf<GameEntry>()
 
         roots.forEach { root ->
-            if (!root.exists()) return@forEach
-            root.walkTopDown().maxDepth(3).forEach { file ->
+            if (!root.isDirectory) return@forEach
+            root.walkTopDown().maxDepth(6).forEach { file ->
+                if (!file.isFile) return@forEach
                 val ext = file.extension.lowercase()
-                val isExtensionless = !file.name.contains(".")
-                
-                // Recognize extensionless files if in a specific console folder (DOS/DSi)
-                // Amiga games should almost always be .adf, .hdf, or .dms images.
-                val isConsoleFolder = file.absolutePath.lowercase().let { 
-                    it.contains("/dosbox/") || it.contains("/dsi/")
+                val isExtensionless = !file.name.contains('.')
+                val path = file.absolutePath.lowercase()
+                val isConsoleFolder = path.contains("/dosbox/") || path.contains("/dsi/")
+                if (ext !in validExts && !(isExtensionless && isConsoleFolder)) return@forEach
+                if (file.length() < 1024 && ext !in smallValidFiles && !isExtensionless) return@forEach
+
+                // A .cue is the launch entry for a multi-track PS1 disc. Hide
+                // its paired .bin image, but preserve standalone BIN discs.
+                if (ext == "bin") {
+                    val cue = File(file.parentFile, file.nameWithoutExtension + ".cue")
+                    if (cue.isFile) return@forEach
                 }
 
-                if (file.isFile && (ext in validExts || (isExtensionless && isConsoleFolder))) {
-                    if (file.length() < 1024 && ext !in setOf("bat", "com", "cue") && !isExtensionless) return@forEach
-
-                    found.add(GameEntry(
-                        name        = file.nameWithoutExtension,
-                        filePath    = file.absolutePath,
+                found.add(
+                    GameEntry(
+                        name = file.nameWithoutExtension,
+                        filePath = file.absolutePath,
                         consoleType = ConsoleType.detect(file.absolutePath)
-                    ))
-                } else if (file.isDirectory && file != root) {
-                    val hasGame = file.listFiles()?.any {
-                        it.extension.lowercase() in validExts
-                    } == true
-                    if (hasGame) {
-                        found.add(GameEntry(
-                            name        = file.name,
-                            filePath    = file.absolutePath,
-                            consoleType = ConsoleType.detect(file.absolutePath)
-                        ))
-                    }
-                }
+                    )
+                )
             }
         }
 
-        val binNames = found
-            .filter { it.filePath.endsWith(".bin", ignoreCase = true) }
-            .map { it.name.substringBeforeLast('.').lowercase() }
-            .toSet()
-
-        val filtered = found.filter { entry ->
-            val isFolder = !entry.filePath.contains('.')
-            if (isFolder) {
-                entry.name.lowercase() !in binNames
-            } else true
-        }
-
-        // Deduplicate: same base filename = same game, keep first found
-        val seenNames = mutableSetOf<String>()
-        return filtered.filter { entry ->
-            val baseName = File(entry.filePath)
-                .nameWithoutExtension
-                .lowercase()
-                .replace(" ", "_")
-                .replace("(", "").replace(")", "")
-                .replace("[", "").replace("]", "")
-            seenNames.add(baseName)   // returns false if already present
-        }
+        val seenPaths = mutableSetOf<String>()
+        return found
+            .sortedWith(compareBy({ it.consoleType.name }, { it.name.lowercase() }))
+            .filter { seenPaths.add(it.filePath.lowercase()) }
     }
 
     fun clearAndRescan(context: Context): List<GameEntry> {
         libraryFile(context).delete()
-        return scanGamesFolder(context)
+        val scanned = scanGamesFolder(context)
+        // Persist immediately. Existing UI code that reloads GameLibrary after
+        // pressing Scan will now receive the newly discovered games.
+        save(context, scanned)
+        return scanned
     }
 }

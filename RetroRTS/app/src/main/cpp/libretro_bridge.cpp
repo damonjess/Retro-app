@@ -596,12 +596,15 @@ void LibretroHost::runLoop() {
         totalRunTimeUs_.fetch_add(
             std::chrono::duration_cast<std::chrono::microseconds>(end - start).count());
 
-        // Throttle the frame loop so DOSBox doesn't outrun real-time.
-        // Without this, the core generates audio faster than AAudio can drain it,
-        // causing constant timeouts and silence.
-        auto frameBudget = std::chrono::microseconds(16667); // ~60 FPS
-        if (end - start < frameBudget) {
-            std::this_thread::sleep_for(frameBudget - (end - start));
+        // DOSBox-Pure is audio-clocked. An additional 60 Hz sleep makes it
+        // miss its native timing (and starves audio on busy Android devices).
+        // AudioTrack's blocking PCM write provides the real-time backpressure.
+        // Keep the legacy video pacing only for the other libretro cores.
+        if (coreType_ != CoreType::DOSBOX) {
+            const auto frameBudget = std::chrono::microseconds(16667); // ~60 FPS
+            if (end - start < frameBudget) {
+                std::this_thread::sleep_for(frameBudget - (end - start));
+            }
         }
 
         // Update stats every second
@@ -854,7 +857,7 @@ bool LibretroHost::envCallback(unsigned cmd, void* data) {
                     return true;
                 }
                 if (key == "dosbox_pure_cycles") {
-                    var->value = "7800"; // 386DX/33-class speed is ideal for Dune II.
+                    var->value = "6000"; // Smooth Dune II timing without excess Android CPU load.
                     return true;
                 }
                 if (key == "dosbox_pure_memory_size") {

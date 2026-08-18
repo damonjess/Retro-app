@@ -28,9 +28,10 @@ object NativeAudioFallback {
         )
         if (minBuffer <= 0) return false
 
-        // Prioritise stable game audio over very low latency. A 333 ms target
-        // absorbs emulator-frame variation that would otherwise cause clicks.
-        val bufferSize = max(minBuffer * 6, sampleRate / 3 * 4)
+        // Keep enough queued audio for busy frames, but avoid the old 333 ms
+        // queue: it delayed feedback and made a missed callback audible longer.
+        // 160 ms is stable on mid-range Android devices while remaining responsive.
+        val bufferSize = max(minBuffer * 4, sampleRate / 6 * 4)
         return runCatching {
             val newTrack = AudioTrack.Builder()
                 .setAudioAttributes(

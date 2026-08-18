@@ -29,10 +29,28 @@ data class GameProfile(
         .put("skipKey", skipKey)
         .toString(2)
 
+    /**
+     * Creates a DOSBox configuration for a directory or a directly runnable
+     * DOS program. Archives are deliberately never written into [autoexec]:
+     * DOSBox cannot execute a .zip file, and doing so only leaves the user at
+     * an "Illegal command" prompt.
+     */
     fun toDosboxConfig(gameFilePath: String): String {
         val file = File(gameFilePath)
         val parentDir = if (file.isDirectory) file.absolutePath else (file.parentFile?.absolutePath ?: "/")
         val fileName = if (file.isDirectory) "" else file.name
+        val directLaunchExtensions = setOf("exe", "com", "bat")
+        val extension = file.extension.lowercase()
+        val directLaunch = fileName.takeIf {
+            extension in directLaunchExtensions &&
+                !it.contains('"') &&
+                !it.any { character -> character in "&|<>" }
+        }
+        val directCommand = when {
+            directLaunch == null -> ""
+            extension == "bat" -> "if exist \"$directLaunch\" call \"$directLaunch\""
+            else -> "if exist \"$directLaunch\" \"$directLaunch\""
+        }
 
         return """
             [dosbox]
@@ -58,11 +76,14 @@ data class GameProfile(
             @echo off
             mount c "$parentDir"
             c:
-            ${if (fileName.isNotEmpty()) (if (fileName.contains(" ")) "\"$fileName\"" else fileName) else ""}
+            $directCommand
             if exist dune2000.exe dune2000.exe
             if exist ra95.exe ra95.exe
             if exist c&c.exe c&c.exe
             if exist play.bat call play.bat
+            if exist game.exe game.exe
+            if exist dune.exe dune.exe
+            if exist dune.bat call dune.bat
         """.trimIndent()
     }
 
@@ -239,7 +260,9 @@ enum class ConsoleType {
                     -> NINTENDO_DSI
                 n.endsWith(".adf") || n.endsWith(".hdf") || n.endsWith(".dms")
                     -> AMIGA
-                n.endsWith(".bin") || n.endsWith(".cue") || n.endsWith(".img")
+                n.endsWith(".bin") || n.endsWith(".cue") || n.endsWith(".img") ||
+                    n.endsWith(".pbp") || n.endsWith(".ecm") || n.endsWith(".ccd") ||
+                    parentName == "ps1" || n.contains("/ps1/")
                     -> PS1
                 n.endsWith(".iso") || n.endsWith(".chd") || n.endsWith(".cso") -> {
                     when {

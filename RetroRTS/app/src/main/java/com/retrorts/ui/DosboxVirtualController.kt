@@ -41,42 +41,25 @@ import kotlin.math.roundToInt
 @Composable
 fun DosboxVirtualController(
     modifier: Modifier = Modifier,
-    mouseSpeed: Float = 1.5f,
+    mouseSpeed: Float = 9f,
     deadZone: Float = 0.16f
 ) {
     var stickDirection by remember { mutableStateOf(Offset.Zero) }
     var mouseButtons by remember { mutableStateOf(0) }
 
-    // We use accumulators to allow for sub-pixel movement speeds.
-    // This makes fine-grained selection much easier by letting the cursor
-    // move slower than 1 pixel per frame at low stick deflection.
+    // A stick is held in one place after the initial touch event, so mouse
+    // motion must be generated continuously rather than only on touch moves.
     LaunchedEffect(stickDirection, mouseButtons) {
         if (abs(stickDirection.x) < deadZone && abs(stickDirection.y) < deadZone) {
             return@LaunchedEffect
         }
-        
-        var accX = 0f
-        var accY = 0f
-        
         while (abs(stickDirection.x) >= deadZone || abs(stickDirection.y) >= deadZone) {
-            // Apply a cubic curve (x^3) to the input.
-            // This makes the "slow zone" around the center much larger,
-            // so you have to really push the stick to get to higher speeds.
-            val curveX = stickDirection.x * stickDirection.x * stickDirection.x
-            val curveY = stickDirection.y * stickDirection.y * stickDirection.y
-            
-            accX += curveX * mouseSpeed
-            accY += curveY * mouseSpeed
-            
-            val dx = accX.toInt()
-            val dy = accY.toInt()
-            
+            val dx = (stickDirection.x * mouseSpeed).roundToInt()
+            val dy = (stickDirection.y * mouseSpeed).roundToInt()
             if (dx != 0 || dy != 0) {
                 DosboxBridge.updateMouse(mouseButtons, dx, dy)
-                accX -= dx
-                accY -= dy
             }
-            delay(16L)
+            delay(24L)
         }
     }
 
